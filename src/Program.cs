@@ -175,7 +175,14 @@ namespace SWBodyOrganizer
             using (MainForm form = new MainForm())
             {
                 form.LoadProjectForScreenshot(projectPath, false, false);
-                return form.RunLogicSelfTest() ? 0 : 3;
+                form.StartPosition = FormStartPosition.Manual;
+                form.Location = new Point(-32000, -32000);
+                form.Show();
+                Application.DoEvents();
+                bool passed = form.RunLogicSelfTest();
+                form.AllowCloseForSelfTest();
+                form.Close();
+                return passed ? 0 : 3;
             }
         }
     }

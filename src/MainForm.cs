@@ -46,6 +46,7 @@ namespace SWBodyOrganizer
         private readonly Button cancelButton = new Button();
         private readonly Button exportButton = new Button();
         private readonly Button openReportButton = new Button();
+        private readonly Button finishNameEditButton = new Button();
         private readonly ToolTip toolTip = new ToolTip();
         private readonly BackgroundWorker worker = new BackgroundWorker();
         private string activeCancelFile = string.Empty;
@@ -243,6 +244,18 @@ namespace SWBodyOrganizer
             actions.Controls.Add(guidedButton);
             actions.Controls.Add(locateButton);
             actions.Controls.Add(batchCategoryButton);
+            finishNameEditButton.Text = "完成改名";
+            finishNameEditButton.AutoSize = true;
+            finishNameEditButton.Height = 28;
+            finishNameEditButton.BackColor = Color.White;
+            finishNameEditButton.ForeColor = BrandRed;
+            finishNameEditButton.FlatStyle = FlatStyle.Flat;
+            finishNameEditButton.FlatAppearance.BorderColor = BrandRed;
+            finishNameEditButton.Margin = new Padding(2, 0, 2, 0);
+            finishNameEditButton.Enabled = false;
+            finishNameEditButton.Click += FinishExportNameEdit;
+            toolTip.SetToolTip(finishNameEditButton, "双击导出名称开始输入，输入完成后点击这里；Enter 完成，Esc 取消");
+            actions.Controls.Add(finishNameEditButton);
             actions.Controls.Add(MakeSmallButton("全选", delegate { SetSelection(1); }));
             actions.Controls.Add(MakeSmallButton("全不选", delegate { SetSelection(0); }));
             actions.Controls.Add(MakeSmallButton("反选", delegate { SetSelection(-1); }));
@@ -500,10 +513,11 @@ namespace SWBodyOrganizer
             bodyGrid.Columns.Add(new DataGridViewComboBoxColumn { Name = "Category", HeaderText = "分类", Width = 160, MinimumWidth = 125, FlatStyle = FlatStyle.Flat, DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton });
             bodyGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Quantity", HeaderText = "相同件", Width = 68, MinimumWidth = 60, FillWeight = 52, ReadOnly = true });
             bodyGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "状态", Width = 82, MinimumWidth = 76, FillWeight = 62, ReadOnly = true });
-            bodyGrid.CurrentCellDirtyStateChanged += delegate { if (bodyGrid.IsCurrentCellDirty) bodyGrid.CommitEdit(DataGridViewDataErrorContexts.Commit); };
+            bodyGrid.CurrentCellDirtyStateChanged += GridCurrentCellDirtyStateChanged;
             bodyGrid.CellValueChanged += GridCellValueChanged;
+            bodyGrid.CellBeginEdit += GridCellBeginEdit;
             bodyGrid.CellEndEdit += GridCellEndEdit;
-            bodyGrid.CellDoubleClick += delegate(object sender, DataGridViewCellEventArgs e) { if (e.RowIndex >= 0 && e.ColumnIndex == bodyGrid.Columns["ExportName"].Index) bodyGrid.BeginEdit(true); };
+            bodyGrid.CellDoubleClick += BeginExportNameEdit;
             bodyGrid.SelectionChanged += delegate { ShowSelectedPreviews(); };
             bodyGrid.DataError += delegate(object sender, DataGridViewDataErrorEventArgs e) { e.ThrowException = false; };
             bodyGrid.MouseDown += delegate(object sender, MouseEventArgs e) { gridDragStart = e.Location; };
@@ -1086,6 +1100,7 @@ namespace SWBodyOrganizer
         private void GridCellValueChanged(object sender, DataGridViewCellEventArgs e)
         {
             if (gridRefreshing || e.RowIndex < 0) return;
+            if (e.ColumnIndex == bodyGrid.Columns["ExportName"].Index) return;
             BodyRecord body = bodyGrid.Rows[e.RowIndex].Tag as BodyRecord;
             if (body == null) return;
             bool selected = Convert.ToBoolean(bodyGrid.Rows[e.RowIndex].Cells["Selected"].Value ?? false);
@@ -1094,6 +1109,39 @@ namespace SWBodyOrganizer
             ApplyToGroup(body, exportName, categoryId, selected);
             MarkProjectDirty();
             UpdateSelectionSummary();
+        }
+
+        private static bool ShouldCommitDirtyCell(DataGridViewCell cell)
+        {
+            return cell is DataGridViewCheckBoxCell || cell is DataGridViewComboBoxCell;
+        }
+
+        private void GridCurrentCellDirtyStateChanged(object sender, EventArgs e)
+        {
+            if (!bodyGrid.IsCurrentCellDirty || !ShouldCommitDirtyCell(bodyGrid.CurrentCell)) return;
+            bodyGrid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+        }
+
+        private void BeginExportNameEdit(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex != bodyGrid.Columns["ExportName"].Index) return;
+            bodyGrid.CurrentCell = bodyGrid.Rows[e.RowIndex].Cells["ExportName"];
+            bodyGrid.BeginEdit(true);
+        }
+
+        private void GridCellBeginEdit(object sender, DataGridViewCellCancelEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex != bodyGrid.Columns["ExportName"].Index) return;
+            finishNameEditButton.Enabled = true;
+        }
+
+        private void FinishExportNameEdit(object sender, EventArgs e)
+        {
+            if (bodyGrid.IsCurrentCellInEditMode && bodyGrid.CurrentCell != null &&
+                bodyGrid.CurrentCell.ColumnIndex == bodyGrid.Columns["ExportName"].Index)
+                bodyGrid.EndEdit();
+            finishNameEditButton.Enabled = false;
+            bodyGrid.Focus();
         }
 
         private void GridCellEndEdit(object sender, DataGridViewCellEventArgs e)
@@ -1105,6 +1153,11 @@ namespace SWBodyOrganizer
             bodyGrid.Rows[e.RowIndex].Cells["ExportName"].Value = body.ExportName;
             ApplyToGroup(body, body.ExportName, body.CategoryId, body.ExportSelected);
             MarkProjectDirty();
+            BeginInvoke((MethodInvoker)delegate
+            {
+                finishNameEditButton.Enabled = bodyGrid.IsCurrentCellInEditMode && bodyGrid.CurrentCell != null &&
+                    bodyGrid.CurrentCell.ColumnIndex == bodyGrid.Columns["ExportName"].Index;
+            });
         }
 
         private void SetSelection(int mode)

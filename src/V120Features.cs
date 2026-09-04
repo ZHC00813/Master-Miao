@@ -70,6 +70,10 @@ namespace SWBodyOrganizer
 
         internal bool RunLogicSelfTest()
         {
+            if (ShouldCommitDirtyCell(new DataGridViewTextBoxCell()) ||
+                !ShouldCommitDirtyCell(new DataGridViewCheckBoxCell()) ||
+                !ShouldCommitDirtyCell(new DataGridViewComboBoxCell())) return false;
+            if (!RunExportNameEditSelfTest()) return false;
             WorkerRequest lifecycleRequest = new WorkerRequest { Operation = "scan", KeepSourceDocumentsOpen = true };
             WorkerResponse lifecycleResponse = new WorkerResponse { Success = true, SolidWorksKeptOpen = true };
             SourceRecord completedSource = new SourceRecord { Status = "读取完成" };
@@ -115,6 +119,46 @@ namespace SWBodyOrganizer
                 all[1].CategoryId = secondCategory;
                 all[1].ExportSelected = secondSelected;
                 project.Export.Deduplicate = originalDeduplicate;
+            }
+        }
+
+        private bool RunExportNameEditSelfTest()
+        {
+            if (bodyGrid.Rows.Count == 0) return false;
+            DataGridViewRow row = bodyGrid.Rows[0];
+            BodyRecord body = row.Tag as BodyRecord;
+            if (body == null) return false;
+            string originalName = body.ExportName;
+            bool originalDirty = projectDirty;
+            bool originalExportSucceeded = project.LastExportSucceeded;
+            const string editedName = "连续输入多个字符";
+            try
+            {
+                bodyGrid.CurrentCell = row.Cells["ExportName"];
+                if (!bodyGrid.BeginEdit(true)) return false;
+                TextBox editor = bodyGrid.EditingControl as TextBox;
+                if (editor == null) return false;
+                editor.Text = string.Empty;
+                Application.DoEvents();
+                foreach (char character in editedName)
+                {
+                    editor.AppendText(character.ToString());
+                    Application.DoEvents();
+                    if (!bodyGrid.IsCurrentCellInEditMode || body.ExportName != originalName) return false;
+                }
+                FinishExportNameEdit(this, EventArgs.Empty);
+                Application.DoEvents();
+                return !bodyGrid.IsCurrentCellInEditMode && body.ExportName == editedName &&
+                    Convert.ToString(row.Cells["ExportName"].Value) == editedName;
+            }
+            finally
+            {
+                if (bodyGrid.IsCurrentCellInEditMode) bodyGrid.CancelEdit();
+                body.ExportName = originalName;
+                row.Cells["ExportName"].Value = originalName;
+                projectDirty = originalDirty;
+                project.LastExportSucceeded = originalExportSucceeded;
+                UpdateWindowTitle();
             }
         }
 
