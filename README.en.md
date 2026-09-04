@@ -27,6 +27,7 @@ This repository contains reproducible source code and validation documents. User
 
 ## Main capabilities
 
+- Keeps multi-character export-name editing active until the user finishes the edit. A localized **Finish rename** button provides an explicit commit action, and the behavior is covered by a UI logic self-test.
 - Detects installed SolidWorks versions, API availability, part and assembly templates, and the STEP export entry point.
 - Scans multiple source parts and keeps successfully scanned source documents open for later body highlighting.
 - Shows three thumbnails per body in the list and three larger views in Guided mode.

@@ -75,7 +75,25 @@ V1.2.3 将软件正式命名为 **Master Miao**。用户提供的猫咪扳手图
 
 该版本没有改变 SolidWorks 宏和装配体批量导出顺序，只改变通过校验后的正式归位路径。为避免受 SolidWorks 桌面权限影响，新增了独立路径测试：使用有效 STEP 文件头在临时目录中验证同目录兼容、镜像目录、零件与装配体 STEP 归位、跨目录重名检测以及 STEP 不泄漏到源文件树。
 
-### 9. 当前原则与后续方向
+V1.2.4 的最终修订还修复了列表中“导出名称”每输入一个字符便退出编辑的问题。根因是 `CurrentCellDirtyStateChanged` 对所有单元格统一立即提交，文本单元格也被当成复选框或下拉框处理。修订后只有复选框和分类下拉框会即时提交，名称则在结束编辑、按 Enter 或点击“完成改名 / Finish rename”后一次性写回。自检会逐字符输入一段多字符名称，并确认编辑过程中数据模型未被提前修改、完成后才正确提交。
+
+### 9. 已保存发行包的证据化复盘
+
+本次公开整理没有只依赖对话记忆，而是逐一读取用户保留的七个发行压缩包，核对 ZIP 条目、源码变化、README、验证记录、测试结果、文件时间与 SHA-256。它们构成了从 SW Body Organizer 到 Master Miao 的可追溯版本链：
+
+| 版本包 | 保存时间 | SHA-256 | 经文件对比确认的主要变化 |
+|---|---:|---|---|
+| `SWBodyOrganizer-v1.1.0.zip` | 2026-09-04 00:46 | `AF68EE61C93109EA58B272BDCF37335A1308C72E830D1A9C43EC1237B2A89580` | 建立多实体读取、三视图、SLDPRT 拆分、原位装配体、12 列 Excel、暂存验证与源文件保护基线；当时后台 STEP 仍返回保存错误。 |
+| `SWBodyOrganizer-v1.1.2.zip` | 2026-09-04 09:33 | `46D9DBB34E8BDA49B33CCF52E7D0021D0AFF63513F021312FE6276D42531DFFD` | 新增编译型 STEP 宏与装配体批量 STEP 路线；加入 SolidWorks 启动授权、会话所有权、干扰检测、结束统计及失败原因；真实桌面三零件验收通过。 |
+| `SWBodyOrganizer-v1.2.1.zip` | 2026-09-04 12:03 | `72AADEB33DB9C940C1D3F155F3DBBA12C2AB2CB494A7D5D9A1FC0DD5E9166594` | 引入三缩略图、列表/逐项双模式、缩放、多文件、多选批量分类、可视化去重、SW 高亮定位、中英文、工作项目与恢复；修复 V1.2.0 的 `BeginInvoke` 启动崩溃。 |
+| `SWBodyOrganizer-v1.2.2.zip` | 2026-09-04 12:42 | `19A55CC7C201D7CA506626390D492A1AD98054C891DA7EC91B7AC64FD431C4CA` | 读取后保留源多实体零件和 SolidWorks；增加自动打开、手动打开、取消三种选择、页面“打开 SolidWorks”按钮及自动失败后的手动重试。 |
+| `Master-Miao-v1.2.3.zip` | 2026-09-04 18:27 | `EA3FC506EFB62A011E43311FC570834067EF0A5A3A87BB7707AB862BA8DA8E36` | 软件、EXE、宏和 Excel 元数据统一为 Master Miao；加入用户提供的猫咪扳手 PNG、9 尺寸 Windows ICO 及可复现图标构建脚本。 |
+| `Master-Miao-v1.2.4.zip` | 2026-09-04 21:30 | `98BE3F83BD400459EDFCEDF017584428BE72DD6100D6FF2144AFB79132B7C235` | 增加 STEP 与 SLDPRT 同目录/独立镜像双目录两种生产归档方式，并加入目录路由回归测试。 |
+| `Master-Miao-v1.2.4-name-edit-fix.zip` | 2026-09-04 22:41 | `7024BE2251793AAA0EA544BFE294FF21AB3BC36D0CA5A0E2503661B4F75AFE6D` | V1.2.4 最终修订：修复导出名称逐字符编辑中断，增加“完成改名”按钮、英文翻译和对应 UI 生命周期自检。 |
+
+V1.2.0 没有出现在保存包中；它的存在及启动问题由 V1.2.1 的 README、测试记录和源代码修复共同佐证，因此在本历程中被明确标为中间开发版本，而不是可分发版本。公开仓库以最后一个修订包为当前代码基线；旧压缩包仅用于历史核对，不上传用户运行数据、CAD 测试模型或旧二进制。
+
+### 10. 当前原则与后续方向
 
 项目目前坚持四个原则：源文件只读、正式输出前验证、用户会话可恢复、失败原因可解释。代码保持在少量明确模块中，不为单一功能无限增加层级。
 
@@ -158,7 +176,25 @@ In separate mode, SLDPRT and optional SLDASM files enter the source tree; part a
 
 The SolidWorks macro and assembly batch sequence did not change. Only the final destination after validation changed. An isolated route test now uses valid STEP headers in a temporary directory to verify compatibility mode, mirrored trees, part and assembly placement, cross-root conflict detection, and the absence of STEP leakage into the source tree.
 
-### 9. Current principles and future work
+The final V1.2.4 revision also fixed an export-name editing defect where the table left edit mode after every character. The cause was a shared `CurrentCellDirtyStateChanged` handler committing text cells as aggressively as checkboxes and combo boxes. The revised implementation commits only checkbox and category cells immediately; a name is written back once editing ends, Enter is pressed, or **Finish rename** is clicked. Its self-test enters a multi-character value one character at a time, confirms that the data model is unchanged during editing, and verifies the final commit.
+
+### 9. Archive-backed release reconstruction
+
+The public history was reconstructed from the seven release archives retained by the user rather than from conversation memory alone. ZIP inventories, source changes, README files, validation notes, test results, timestamps, and SHA-256 hashes were compared:
+
+| Archive | Saved | SHA-256 | File-backed milestone |
+|---|---:|---|---|
+| `SWBodyOrganizer-v1.1.0.zip` | 2026-09-04 00:46 | `AF68EE61C93109EA58B272BDCF37335A1308C72E830D1A9C43EC1237B2A89580` | Established body scanning, three views, SLDPRT splitting, in-place assembly, a 12-column Excel report, staged verification, and source protection; background STEP saving still failed. |
+| `SWBodyOrganizer-v1.1.2.zip` | 2026-09-04 09:33 | `46D9DBB34E8BDA49B33CCF52E7D0021D0AFF63513F021312FE6276D42531DFFD` | Added the compiled macro and assembly batch STEP route, launch authorization, session ownership, interference checks, completion statistics, and detailed failures; passed a real desktop three-part run. |
+| `SWBodyOrganizer-v1.2.1.zip` | 2026-09-04 12:03 | `72AADEB33DB9C940C1D3F155F3DBBA12C2AB2CB494A7D5D9A1FC0DD5E9166594` | Added three thumbnails, table/guided modes, scaling, multi-file classification, visible deduplication, SW highlighting, bilingual UI, project persistence, and recovery; fixed the V1.2.0 `BeginInvoke` startup crash. |
+| `SWBodyOrganizer-v1.2.2.zip` | 2026-09-04 12:42 | `19A55CC7C201D7CA506626390D492A1AD98054C891DA7EC91B7AC64FD431C4CA` | Kept scanned source documents and SolidWorks open; added automatic/manual/cancel launch choices, an in-page launch button, and manual retry after an automatic failure. |
+| `Master-Miao-v1.2.3.zip` | 2026-09-04 18:27 | `EA3FC506EFB62A011E43311FC570834067EF0A5A3A87BB7707AB862BA8DA8E36` | Unified the Master Miao product, executable, macro, and report identity; added the user-designed cat-and-wrench artwork, nine-size ICO, and reproducible icon builder. |
+| `Master-Miao-v1.2.4.zip` | 2026-09-04 21:30 | `98BE3F83BD400459EDFCEDF017584428BE72DD6100D6FF2144AFB79132B7C235` | Added same-folder and separate mirrored-tree production routing plus a dedicated folder-layout regression test. |
+| `Master-Miao-v1.2.4-name-edit-fix.zip` | 2026-09-04 22:41 | `7024BE2251793AAA0EA544BFE294FF21AB3BC36D0CA5A0E2503661B4F75AFE6D` | Final V1.2.4 revision: fixed interrupted multi-character export-name editing and added the localized Finish rename action and lifecycle self-test. |
+
+V1.2.0 is not present among the retained archives. Its intermediate existence and failure mode are supported by the V1.2.1 README, test evidence, and source changes, so it is documented as a development build rather than a distributable release. The public repository uses the final revision archive as its current code baseline. Older archives remain evidence only; runtime user data, CAD test models, and old binaries are not published.
+
+### 10. Current principles and future work
 
 The project follows four principles: sources stay read-only, formal output is verified first, user sessions are recoverable, and failures are explainable. The code remains in a small number of modules instead of accumulating a new layer for every feature.
 
