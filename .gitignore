@@ -1,0 +1,34 @@
+# Build and IDE output
+/build/
+/bin/
+/obj/
+/.vs/
+*.user
+*.suo
+
+# Portable runtime data and user projects
+/Data/
+/Previews/
+*.swbody.json
+project.swbody.json
+
+# Generated binaries and packages
+*.exe
+*.dll
+*.zip
+*.7z
+*.pdb
+
+# SolidWorks and neutral-format test artifacts
+*.SLDPRT
+*.SLDASM
+*.STEP
+*.STP
+*.STL
+*.x_t
+
+# Temporary and operating-system files
+*.tmp
+*.bak
+Thumbs.db
+.DS_Store
