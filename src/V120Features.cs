@@ -58,6 +58,15 @@ namespace SWBodyOrganizer
             }
         }
 
+        internal void PrepareNameEditForScreenshot()
+        {
+            if (bodyGrid.Rows.Count == 0) return;
+            int columnIndex = bodyGrid.Columns["ExportName"].Index;
+            BeginExportNameEdit(this, new DataGridViewCellEventArgs(columnIndex, 0));
+            exportNameEditor.Text = "输入法可以连续选字";
+            exportNameEditor.SelectionStart = exportNameEditor.TextLength;
+        }
+
         internal void SaveProjectForSelfTest(string path)
         {
             SaveProjectToPath(path, true);
@@ -134,26 +143,38 @@ namespace SWBodyOrganizer
             const string editedName = "连续输入多个字符";
             try
             {
-                bodyGrid.CurrentCell = row.Cells["ExportName"];
-                if (!bodyGrid.BeginEdit(true)) return false;
-                TextBox editor = bodyGrid.EditingControl as TextBox;
-                if (editor == null) return false;
-                editor.Text = string.Empty;
+                int columnIndex = bodyGrid.Columns["ExportName"].Index;
+                BeginExportNameEdit(this, new DataGridViewCellEventArgs(columnIndex, row.Index));
+                if (!exportNameEditor.Visible || exportNameEditRowIndex != row.Index) return false;
+                exportNameEditor.Text = string.Empty;
                 Application.DoEvents();
                 foreach (char character in editedName)
                 {
-                    editor.AppendText(character.ToString());
+                    exportNameEditor.AppendText(character.ToString());
                     Application.DoEvents();
-                    if (!bodyGrid.IsCurrentCellInEditMode || body.ExportName != originalName) return false;
+                    KeyEventArgs inputMethodConfirmation = new KeyEventArgs(Keys.Enter);
+                    ExportNameEditorKeyDown(exportNameEditor, inputMethodConfirmation);
+                    if (!inputMethodConfirmation.Handled || !inputMethodConfirmation.SuppressKeyPress ||
+                        !exportNameEditor.Visible || body.ExportName != originalName) return false;
                 }
                 FinishExportNameEdit(this, EventArgs.Empty);
                 Application.DoEvents();
-                return !bodyGrid.IsCurrentCellInEditMode && body.ExportName == editedName &&
-                    Convert.ToString(row.Cells["ExportName"].Value) == editedName;
+                if (exportNameEditor.Visible || body.ExportName != editedName ||
+                    Convert.ToString(row.Cells["ExportName"].Value) != editedName) return false;
+
+                const string clickCommittedName = "点击其他单元格提交";
+                BeginExportNameEdit(this, new DataGridViewCellEventArgs(columnIndex, row.Index));
+                exportNameEditor.Text = clickCommittedName;
+                GridCellMouseDown(this, new DataGridViewCellMouseEventArgs(
+                    bodyGrid.Columns["OriginalName"].Index, row.Index, 1, 1,
+                    new MouseEventArgs(MouseButtons.Left, 1, 1, 1, 0)));
+                Application.DoEvents();
+                return !exportNameEditor.Visible && body.ExportName == clickCommittedName &&
+                    Convert.ToString(row.Cells["ExportName"].Value) == clickCommittedName;
             }
             finally
             {
-                if (bodyGrid.IsCurrentCellInEditMode) bodyGrid.CancelEdit();
+                CancelExportNameEdit();
                 body.ExportName = originalName;
                 row.Cells["ExportName"].Value = originalName;
                 projectDirty = originalDirty;
@@ -164,7 +185,7 @@ namespace SWBodyOrganizer
 
         private void ApplyLanguage()
         {
-            Text = "Master Miao · V1.2.4";
+            Text = "Master Miao · V1.2.5";
             UiText.Apply(this);
             if (conflictCombo.Items.Count > 0)
             {
@@ -464,7 +485,7 @@ namespace SWBodyOrganizer
         private void UpdateWindowTitle()
         {
             string name = string.IsNullOrWhiteSpace(project.Name) ? UiText.T("未命名项目", "Untitled project") : project.Name;
-            Text = "Master Miao · V1.2.4 · " + name + (projectDirty ? " *" : string.Empty);
+            Text = "Master Miao · V1.2.5 · " + name + (projectDirty ? " *" : string.Empty);
         }
 
         private bool SaveProjectInteractive()

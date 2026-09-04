@@ -11,7 +11,7 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("读取、预览、分类并安全导出 SolidWorks 多实体零件与原位装配体")]
 [assembly: AssemblyCompany("Master Miao")]
 [assembly: AssemblyProduct("Master Miao")]
-[assembly: AssemblyVersion("1.2.4.0")]
+[assembly: AssemblyVersion("1.2.5.0")]
 [assembly: ComVisible(false)]
 
 namespace SWBodyOrganizer
@@ -54,6 +54,8 @@ namespace SWBodyOrganizer
                 return CaptureUi(args[1], string.Empty, false, false, 1540, 920);
             if (args.Length == 3 && string.Equals(args[0], "--ui-guided-screenshot", StringComparison.OrdinalIgnoreCase))
                 return CaptureGuidedUi(args[1], args[2]);
+            if (args.Length == 3 && string.Equals(args[0], "--ui-name-edit-screenshot", StringComparison.OrdinalIgnoreCase))
+                return CaptureNameEditUi(args[1], args[2]);
             if (args.Length == 3 && string.Equals(args[0], "--ui-project-screenshot-en", StringComparison.OrdinalIgnoreCase))
             {
                 UserSettingsStore.Current.Language = "en-US";
@@ -148,6 +150,32 @@ namespace SWBodyOrganizer
             {
                 form.LoadProjectForScreenshot(projectPath, false, false);
                 form.CaptureGuidedScreenshot(outputPath);
+            }
+            return File.Exists(outputPath) ? 0 : 1;
+        }
+
+        private static int CaptureNameEditUi(string projectPath, string outputPath)
+        {
+            SuppressStartupPrompts = true;
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            using (MainForm form = new MainForm())
+            {
+                form.LoadProjectForScreenshot(projectPath, false, false);
+                form.StartPosition = FormStartPosition.Manual;
+                form.Location = new Point(-32000, -32000);
+                form.Size = new Size(1540, 920);
+                form.Show();
+                Application.DoEvents();
+                form.PrepareNameEditForScreenshot();
+                Application.DoEvents();
+                using (Bitmap bitmap = new Bitmap(form.Width, form.Height))
+                {
+                    form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
+                    bitmap.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
+                }
+                form.AllowCloseForSelfTest();
+                form.Close();
             }
             return File.Exists(outputPath) ? 0 : 1;
         }

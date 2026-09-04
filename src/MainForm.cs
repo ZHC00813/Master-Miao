@@ -47,6 +47,7 @@ namespace SWBodyOrganizer
         private readonly Button exportButton = new Button();
         private readonly Button openReportButton = new Button();
         private readonly Button finishNameEditButton = new Button();
+        private readonly TextBox exportNameEditor = new TextBox();
         private readonly ToolTip toolTip = new ToolTip();
         private readonly BackgroundWorker worker = new BackgroundWorker();
         private string activeCancelFile = string.Empty;
@@ -65,6 +66,7 @@ namespace SWBodyOrganizer
         private bool activeTaskIsExport;
         private WorkerResponse lastDetection;
         private Point gridDragStart;
+        private int exportNameEditRowIndex = -1;
 
         public MainForm()
         {
@@ -73,7 +75,7 @@ namespace SWBodyOrganizer
             project.OutputRoot = !string.IsNullOrWhiteSpace(UserSettingsStore.Current.LastOutputRoot)
                 ? UserSettingsStore.Current.LastOutputRoot
                 : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "SW实体导出");
-            Text = "Master Miao · V1.2.4";
+            Text = "Master Miao · V1.2.5";
             UiBrand.ApplyIcon(this);
             StartPosition = FormStartPosition.CenterScreen;
             MinimumSize = new Size(1100, 720);
@@ -209,7 +211,7 @@ namespace SWBodyOrganizer
             sourceList.DrawMode = DrawMode.OwnerDrawFixed;
             sourceList.ItemHeight = 50;
             sourceList.DrawItem += DrawSourceItem;
-            sourceList.SelectedIndexChanged += delegate { RefreshGrid(); };
+            sourceList.SelectedIndexChanged += delegate { CommitExportNameEdit(); RefreshGrid(); };
             sourceList.MouseMove += ShowSourceToolTip;
             Label hint = new Label { Text = "多文件拖入 · 源文件只读", Dock = DockStyle.Bottom, Height = 31, ForeColor = Color.FromArgb(105, 111, 122), Padding = new Padding(3, 7, 0, 0) };
             panel.Controls.Add(sourceList);
@@ -244,7 +246,7 @@ namespace SWBodyOrganizer
             actions.Controls.Add(guidedButton);
             actions.Controls.Add(locateButton);
             actions.Controls.Add(batchCategoryButton);
-            finishNameEditButton.Text = "完成改名";
+            finishNameEditButton.Text = "命名完毕";
             finishNameEditButton.AutoSize = true;
             finishNameEditButton.Height = 28;
             finishNameEditButton.BackColor = Color.White;
@@ -253,8 +255,9 @@ namespace SWBodyOrganizer
             finishNameEditButton.FlatAppearance.BorderColor = BrandRed;
             finishNameEditButton.Margin = new Padding(2, 0, 2, 0);
             finishNameEditButton.Enabled = false;
+            finishNameEditButton.CausesValidation = false;
             finishNameEditButton.Click += FinishExportNameEdit;
-            toolTip.SetToolTip(finishNameEditButton, "双击导出名称开始输入，输入完成后点击这里；Enter 完成，Esc 取消");
+            toolTip.SetToolTip(finishNameEditButton, "双击导出名称开始输入；输入法选字和 Enter 不会退出，点击这里提交，Esc 取消");
             actions.Controls.Add(finishNameEditButton);
             actions.Controls.Add(MakeSmallButton("全选", delegate { SetSelection(1); }));
             actions.Controls.Add(MakeSmallButton("全不选", delegate { SetSelection(0); }));
@@ -509,20 +512,32 @@ namespace SWBodyOrganizer
             bodyGrid.Columns.Add(new DataGridViewImageColumn { Name = "ThumbnailFront", HeaderText = "前视图", Width = 92, MinimumWidth = 70, ReadOnly = true, ImageLayout = DataGridViewImageCellLayout.Zoom });
             bodyGrid.Columns.Add(new DataGridViewImageColumn { Name = "ThumbnailTop", HeaderText = "上视图", Width = 92, MinimumWidth = 70, ReadOnly = true, ImageLayout = DataGridViewImageCellLayout.Zoom });
             bodyGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "OriginalName", HeaderText = "原实体名", Width = 112, MinimumWidth = 100, ReadOnly = true });
-            bodyGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "ExportName", HeaderText = "导出名称", Width = 142, MinimumWidth = 125 });
+            bodyGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "ExportName", HeaderText = "导出名称", Width = 142, MinimumWidth = 125, ReadOnly = true });
             bodyGrid.Columns.Add(new DataGridViewComboBoxColumn { Name = "Category", HeaderText = "分类", Width = 160, MinimumWidth = 125, FlatStyle = FlatStyle.Flat, DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton });
             bodyGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Quantity", HeaderText = "相同件", Width = 68, MinimumWidth = 60, FillWeight = 52, ReadOnly = true });
             bodyGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "状态", Width = 82, MinimumWidth = 76, FillWeight = 62, ReadOnly = true });
             bodyGrid.CurrentCellDirtyStateChanged += GridCurrentCellDirtyStateChanged;
             bodyGrid.CellValueChanged += GridCellValueChanged;
-            bodyGrid.CellBeginEdit += GridCellBeginEdit;
-            bodyGrid.CellEndEdit += GridCellEndEdit;
             bodyGrid.CellDoubleClick += BeginExportNameEdit;
+            bodyGrid.CellMouseDown += GridCellMouseDown;
             bodyGrid.SelectionChanged += delegate { ShowSelectedPreviews(); };
             bodyGrid.DataError += delegate(object sender, DataGridViewDataErrorEventArgs e) { e.ThrowException = false; };
             bodyGrid.MouseDown += delegate(object sender, MouseEventArgs e) { gridDragStart = e.Location; };
             bodyGrid.MouseMove += BodyGridMouseMove;
             bodyGrid.MouseWheel += BodyGridMouseWheel;
+            bodyGrid.Scroll += delegate { PositionExportNameEditor(); };
+            bodyGrid.ColumnWidthChanged += delegate { PositionExportNameEditor(); };
+            bodyGrid.RowHeightChanged += delegate { PositionExportNameEditor(); };
+            bodyGrid.SizeChanged += delegate { PositionExportNameEditor(); };
+
+            exportNameEditor.Visible = false;
+            exportNameEditor.BorderStyle = BorderStyle.FixedSingle;
+            exportNameEditor.BackColor = Color.White;
+            exportNameEditor.ForeColor = Color.FromArgb(32, 36, 42);
+            exportNameEditor.Font = Font;
+            exportNameEditor.HideSelection = false;
+            exportNameEditor.KeyDown += ExportNameEditorKeyDown;
+            bodyGrid.Controls.Add(exportNameEditor);
         }
 
         private void InitializeWorker()
@@ -1085,6 +1100,7 @@ namespace SWBodyOrganizer
 
         private void CommitGrid()
         {
+            CommitExportNameEdit();
             if (bodyGrid.IsCurrentCellInEditMode) bodyGrid.EndEdit();
             foreach (DataGridViewRow row in bodyGrid.Rows)
             {
@@ -1125,39 +1141,81 @@ namespace SWBodyOrganizer
         private void BeginExportNameEdit(object sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0 || e.ColumnIndex != bodyGrid.Columns["ExportName"].Index) return;
+            if (exportNameEditor.Visible && exportNameEditRowIndex != e.RowIndex) CommitExportNameEdit();
             bodyGrid.CurrentCell = bodyGrid.Rows[e.RowIndex].Cells["ExportName"];
-            bodyGrid.BeginEdit(true);
+            exportNameEditRowIndex = e.RowIndex;
+            exportNameEditor.Text = Convert.ToString(bodyGrid.CurrentCell.Value) ?? string.Empty;
+            PositionExportNameEditor();
+            exportNameEditor.Visible = true;
+            exportNameEditor.BringToFront();
+            finishNameEditButton.Enabled = true;
+            exportNameEditor.Focus();
+            exportNameEditor.SelectAll();
         }
 
-        private void GridCellBeginEdit(object sender, DataGridViewCellCancelEventArgs e)
+        private void GridCellMouseDown(object sender, DataGridViewCellMouseEventArgs e)
         {
-            if (e.RowIndex < 0 || e.ColumnIndex != bodyGrid.Columns["ExportName"].Index) return;
-            finishNameEditButton.Enabled = true;
+            if (!exportNameEditor.Visible || e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            if (e.RowIndex == exportNameEditRowIndex && e.ColumnIndex == bodyGrid.Columns["ExportName"].Index) return;
+            CommitExportNameEdit();
         }
 
         private void FinishExportNameEdit(object sender, EventArgs e)
         {
-            if (bodyGrid.IsCurrentCellInEditMode && bodyGrid.CurrentCell != null &&
-                bodyGrid.CurrentCell.ColumnIndex == bodyGrid.Columns["ExportName"].Index)
-                bodyGrid.EndEdit();
+            CommitExportNameEdit();
+            bodyGrid.Focus();
+        }
+
+        private void CommitExportNameEdit()
+        {
+            if (!exportNameEditor.Visible) return;
+            int rowIndex = exportNameEditRowIndex;
+            string enteredName = exportNameEditor.Text;
+            exportNameEditor.Visible = false;
+            exportNameEditRowIndex = -1;
+            finishNameEditButton.Enabled = false;
+            if (rowIndex < 0 || rowIndex >= bodyGrid.Rows.Count) return;
+            DataGridViewRow row = bodyGrid.Rows[rowIndex];
+            BodyRecord body = row.Tag as BodyRecord;
+            if (body == null) return;
+            body.ExportName = NameRules.SafeStem(enteredName, "零件_" + (body.Index + 1));
+            row.Cells["ExportName"].Value = body.ExportName;
+            ApplyToGroup(body, body.ExportName, body.CategoryId, body.ExportSelected);
+            MarkProjectDirty();
+            ShowSelectedPreviews();
+        }
+
+        private void CancelExportNameEdit()
+        {
+            if (!exportNameEditor.Visible) return;
+            exportNameEditor.Visible = false;
+            exportNameEditRowIndex = -1;
             finishNameEditButton.Enabled = false;
             bodyGrid.Focus();
         }
 
-        private void GridCellEndEdit(object sender, DataGridViewCellEventArgs e)
+        private void ExportNameEditorKeyDown(object sender, KeyEventArgs e)
         {
-            if (e.RowIndex < 0 || e.ColumnIndex != bodyGrid.Columns["ExportName"].Index) return;
-            BodyRecord body = bodyGrid.Rows[e.RowIndex].Tag as BodyRecord;
-            if (body == null) return;
-            body.ExportName = NameRules.SafeStem(Convert.ToString(bodyGrid.Rows[e.RowIndex].Cells["ExportName"].Value), "零件_" + (body.Index + 1));
-            bodyGrid.Rows[e.RowIndex].Cells["ExportName"].Value = body.ExportName;
-            ApplyToGroup(body, body.ExportName, body.CategoryId, body.ExportSelected);
-            MarkProjectDirty();
-            BeginInvoke((MethodInvoker)delegate
+            if (e.KeyCode == Keys.Escape)
             {
-                finishNameEditButton.Enabled = bodyGrid.IsCurrentCellInEditMode && bodyGrid.CurrentCell != null &&
-                    bodyGrid.CurrentCell.ColumnIndex == bodyGrid.Columns["ExportName"].Index;
-            });
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                CancelExportNameEdit();
+                return;
+            }
+            if (e.KeyCode != Keys.Enter) return;
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        }
+
+        private void PositionExportNameEditor()
+        {
+            if (exportNameEditRowIndex < 0 || exportNameEditRowIndex >= bodyGrid.Rows.Count || bodyGrid.Columns["ExportName"] == null) return;
+            Rectangle cellBounds = bodyGrid.GetCellDisplayRectangle(bodyGrid.Columns["ExportName"].Index, exportNameEditRowIndex, true);
+            if (cellBounds.Width < 8 || cellBounds.Height < 8) return;
+            int height = Math.Min(cellBounds.Height - 4, exportNameEditor.PreferredHeight);
+            exportNameEditor.SetBounds(cellBounds.X + 2, cellBounds.Y + Math.Max(2, (cellBounds.Height - height) / 2), Math.Max(20, cellBounds.Width - 4), height);
+            if (exportNameEditor.Visible) exportNameEditor.BringToFront();
         }
 
         private void SetSelection(int mode)

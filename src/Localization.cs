@@ -17,7 +17,7 @@ namespace SWBodyOrganizer
             { "系统", "System" }, { "打开 SolidWorks", "Open SolidWorks" }, { "重新读取", "Rescan" }, { "设置", "Settings" },
             { "源文件", "Source files" }, { "搜索", "Search" }, { "多文件拖入 · 源文件只读", "Drop multiple files · sources stay read-only" },
             { "实体列表", "Body list" }, { "全选", "Select all" }, { "全不选", "Select none" }, { "反选", "Invert" },
-            { "逐项整理", "Guided mode" }, { "批量分类", "Batch category" }, { "在 SW 中定位", "Locate in SW" }, { "完成改名", "Finish rename" },
+            { "逐项整理", "Guided mode" }, { "批量分类", "Batch category" }, { "在 SW 中定位", "Locate in SW" }, { "命名完毕", "Finish naming" },
             { "缩放", "Zoom" }, { "选", "Use" }, { "等轴测", "Isometric" }, { "前视图", "Front" }, { "上视图", "Top" },
             { "原实体名", "Original body" }, { "导出名称", "Export name" }, { "分类", "Category" }, { "相同件", "Qty" }, { "状态", "Status" },
             { "预览", "Preview" }, { "文件夹模板", "Folder template" }, { "应用", "Apply" }, { "另存模板", "Save template" },
