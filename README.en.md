@@ -1,4 +1,4 @@
-# Master Miao V1.2.4
+# Master Miao V1.2.5
 
 [中文](README.md) | [English](README.en.md) | [Development history](DEVELOPMENT_HISTORY.md) | [Architecture](ARCHITECTURE.md)
 
@@ -6,7 +6,7 @@
 
 ![Master Miao main window](docs/UI_PREVIEW.png)
 
-This repository contains reproducible source code and validation documents. User projects, runtime `Data`, SolidWorks test models, build caches, and machine-specific paths are intentionally excluded. A ready-to-run V1.2.4 package is provided on the Releases page.
+This repository contains reproducible source code and validation documents. User projects, runtime `Data`, SolidWorks test models, build caches, and machine-specific paths are intentionally excluded. A ready-to-run V1.2.5 package is provided on the Releases page.
 
 ## Requirements
 
@@ -19,15 +19,23 @@ This repository contains reproducible source code and validation documents. User
 
 1. Start `MasterMiao.exe` and select Chinese or English. The choice can be remembered and changed later in Settings.
 2. Drop or select one or more `.SLDPRT` files. After the SolidWorks notice is confirmed, Master Miao scans bodies and generates isometric, front, and top previews.
-3. Organize bodies in the table with multi-selection and batch classification, or use Guided mode to focus on one body at a time.
+3. Organize bodies in the table with multi-selection and batch classification. Double-click an export name to use the persistent editor; IME candidate confirmation and Enter keep it open, another cell or **Finish naming** commits it, and Esc cancels. Guided mode remains available for one-body-at-a-time work.
 4. A tag is also the destination folder. Create, rename, or remove categories in the tree, or drag blocks in the relationship view to change parent-child relationships.
 5. Optionally enable "Export one per identical geometry" to collapse equivalent bodies into one representative item. Changes to its name, category, and selection state apply to the whole group.
 6. Select the main output folder, formats, assembly option, STEP destination mode, and name-conflict policy, then export.
 7. Save unfinished work as a project folder containing `project.swbody.json` and `Previews`, and continue it later without copying the original SolidWorks files.
 
+## What's new in V1.2.5
+
+- Replaces the short-lived DataGridView name editor with a persistent overlay editor positioned over the export-name cell.
+- IME candidate confirmation and Enter no longer terminate an edit. Clicking another cell, changing the selected source, or choosing **Finish naming** commits the value; Esc cancels it.
+- Adds regression coverage for character-by-character input, simulated IME Enter, click-away commit, and the name-edit UI. Assembly and window versions are now `1.2.5.0` and `V1.2.5`.
+
+![V1.2.5 IME-safe name editor](docs/UI_NAME_EDIT.png)
+
 ## Main capabilities
 
-- Keeps multi-character export-name editing active until the user finishes the edit. A localized **Finish rename** button provides an explicit commit action, and the behavior is covered by a UI logic self-test.
+- Keeps multi-character and IME export-name editing active until the user deliberately finishes naming.
 - Detects installed SolidWorks versions, API availability, part and assembly templates, and the STEP export entry point.
 - Scans multiple source parts and keeps successfully scanned source documents open for later body highlighting.
 - Shows three thumbnails per body in the list and three larger views in Guided mode.
@@ -66,9 +74,9 @@ Both roots use the same category hierarchy. Source part files and production STE
 
 Master Miao first creates and verifies single-body SLDPRT files. It then builds a temporary or retained in-place assembly. The compiled `MasterMiao.StepMacro.dll` temporarily enables SolidWorks' option to export assembly components as individual STEP files and saves the assembly as STEP in one batch. The macro restores the original SolidWorks STEP option in success, failure, and exception paths.
 
-Generated STEP files remain in an isolated staging folder until the log confirms `RESTORED|True`, the batch reports success, and every file starts with the standard `ISO-10303-21;` header. Only then are files committed to their final folders. V1.2.4 changes the final routing only; it does not change the tested SolidWorks macro sequence.
+Generated STEP files remain in an isolated staging folder until the log confirms `RESTORED|True`, the batch reports success, and every file starts with the standard `ISO-10303-21;` header. Only then are files committed to their final folders. V1.2.4 introduced the final routing modes; V1.2.5 changes name editing only and does not change the tested SolidWorks macro sequence.
 
-The same export core was validated on a real user desktop in V1.1.2 with three independent SLDPRT files, three part STEP files, one in-place assembly, one assembly STEP, and one Excel report. The current automation environment could not repeat a complete visible-desktop STEP run because the test process and SolidWorks were running at different Windows integrity levels. This limitation is documented instead of being reported as a successful V1.2.4 desktop test.
+The same export core was validated on a real user desktop in V1.1.2 with three independent SLDPRT files, three part STEP files, one in-place assembly, one assembly STEP, and one Excel report. The current automation environment could not repeat a complete visible-desktop STEP run because the test process and SolidWorks were running at different Windows integrity levels. This limitation remains documented instead of being reported as a successful V1.2.5 desktop STEP test.
 
 ## Project persistence
 

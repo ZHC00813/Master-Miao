@@ -75,11 +75,19 @@ V1.2.3 将软件正式命名为 **Master Miao**。用户提供的猫咪扳手图
 
 该版本没有改变 SolidWorks 宏和装配体批量导出顺序，只改变通过校验后的正式归位路径。为避免受 SolidWorks 桌面权限影响，新增了独立路径测试：使用有效 STEP 文件头在临时目录中验证同目录兼容、镜像目录、零件与装配体 STEP 归位、跨目录重名检测以及 STEP 不泄漏到源文件树。
 
-V1.2.4 的最终修订还修复了列表中“导出名称”每输入一个字符便退出编辑的问题。根因是 `CurrentCellDirtyStateChanged` 对所有单元格统一立即提交，文本单元格也被当成复选框或下拉框处理。修订后只有复选框和分类下拉框会即时提交，名称则在结束编辑、按 Enter 或点击“完成改名 / Finish rename”后一次性写回。自检会逐字符输入一段多字符名称，并确认编辑过程中数据模型未被提前修改、完成后才正确提交。
+V1.2.4 的发布修订还首次修复了列表中“导出名称”每输入一个字符便退出编辑的问题。根因是 `CurrentCellDirtyStateChanged` 对所有单元格统一立即提交，文本单元格也被当成复选框或下拉框处理。修订后只有复选框和分类下拉框即时提交，名称编辑在结束时才写回。这个修复解决了普通键盘连续输入，但后续真实使用发现中文输入法的 Enter 选字仍可能触发 DataGridView 自身结束编辑，因此继续演进为 V1.2.5。
 
-### 9. 已保存发行包的证据化复盘
+### 9. 输入法安全改名与 V1.2.5
 
-本次公开整理没有只依赖对话记忆，而是逐一读取用户保留的七个发行压缩包，核对 ZIP 条目、源码变化、README、验证记录、测试结果、文件时间与 SHA-256。它们构成了从 SW Body Organizer 到 Master Miao 的可追溯版本链：
+V1.2.5 将导出名称编辑从 DataGridView 的临时内置编辑控件中分离出来，改为覆盖在目标名称单元格上的持久 `TextBox`。编辑框会跟随列表滚动、列宽、行高和窗口尺寸变化重新定位；名称列本身改为只读，只有双击时才开启覆盖编辑器，避免表格内部生命周期提前接管输入。
+
+这一版明确区分“输入法确认”和“项目提交”：Enter 被编辑框消化，只用于输入法选字或继续输入，不会提交名称；点击另一单元格、切换源文件或点击“命名完毕 / Finish naming”才净化名称并写回项目及重复件组；Esc 则取消本次修改。相应自检会逐字符输入中文、反复模拟 Enter、确认数据模型在输入阶段不变，再验证按钮提交和点击其他单元格提交。另增加专用改名界面截图入口，便于回归检查编辑框位置与按钮状态。
+
+V1.2.5 仅调整列表改名交互和对应测试，没有改变多实体读取、源文件只读策略、装配体构建、STEP 宏或双目录归位逻辑。
+
+### 10. 已保存发行包的证据化复盘
+
+本次公开整理没有只依赖对话记忆，而是逐一读取用户保留的八个发行压缩包，核对 ZIP 条目、源码变化、README、验证记录、测试结果、文件时间与 SHA-256。它们构成了从 SW Body Organizer 到 Master Miao 的可追溯版本链：
 
 | 版本包 | 保存时间 | SHA-256 | 经文件对比确认的主要变化 |
 |---|---:|---|---|
@@ -90,10 +98,11 @@ V1.2.4 的最终修订还修复了列表中“导出名称”每输入一个字�
 | `Master-Miao-v1.2.3.zip` | 2026-09-04 18:27 | `EA3FC506EFB62A011E43311FC570834067EF0A5A3A87BB7707AB862BA8DA8E36` | 软件、EXE、宏和 Excel 元数据统一为 Master Miao；加入用户提供的猫咪扳手 PNG、9 尺寸 Windows ICO 及可复现图标构建脚本。 |
 | `Master-Miao-v1.2.4.zip` | 2026-09-04 21:30 | `98BE3F83BD400459EDFCEDF017584428BE72DD6100D6FF2144AFB79132B7C235` | 增加 STEP 与 SLDPRT 同目录/独立镜像双目录两种生产归档方式，并加入目录路由回归测试。 |
 | `Master-Miao-v1.2.4-name-edit-fix.zip` | 2026-09-04 22:41 | `7024BE2251793AAA0EA544BFE294FF21AB3BC36D0CA5A0E2503661B4F75AFE6D` | V1.2.4 最终修订：修复导出名称逐字符编辑中断，增加“完成改名”按钮、英文翻译和对应 UI 生命周期自检。 |
+| `Master-Miao-v1.2.4-name-edit-fix-v2.zip` | 2026-09-04 23:25 | `D508E2100AF9A29ECB7AFEF932D4557C2F94599E2FC73267971352D6A5A4096A` | V1.2.5 的输入基线：以持久覆盖编辑框解决中文输入法选字提交问题，增加“命名完毕”、点击外部提交和输入法 Enter 回归测试。 |
 
-V1.2.0 没有出现在保存包中；它的存在及启动问题由 V1.2.1 的 README、测试记录和源代码修复共同佐证，因此在本历程中被明确标为中间开发版本，而不是可分发版本。公开仓库以最后一个修订包为当前代码基线；旧压缩包仅用于历史核对，不上传用户运行数据、CAD 测试模型或旧二进制。
+V1.2.0 没有出现在保存包中；它的存在及启动问题由 V1.2.1 的 README、测试记录和源代码修复共同佐证，因此在本历程中被明确标为中间开发版本，而不是可分发版本。公开仓库以 V2 修订源码为 V1.2.5 的功能基线，并独立完成版本号、双语文档、构建和发行包装；旧压缩包仅用于历史核对，不上传用户运行数据、CAD 测试模型或旧二进制。
 
-### 10. 当前原则与后续方向
+### 11. 当前原则与后续方向
 
 项目目前坚持四个原则：源文件只读、正式输出前验证、用户会话可恢复、失败原因可解释。代码保持在少量明确模块中，不为单一功能无限增加层级。
 
@@ -176,11 +185,19 @@ In separate mode, SLDPRT and optional SLDASM files enter the source tree; part a
 
 The SolidWorks macro and assembly batch sequence did not change. Only the final destination after validation changed. An isolated route test now uses valid STEP headers in a temporary directory to verify compatibility mode, mirrored trees, part and assembly placement, cross-root conflict detection, and the absence of STEP leakage into the source tree.
 
-The final V1.2.4 revision also fixed an export-name editing defect where the table left edit mode after every character. The cause was a shared `CurrentCellDirtyStateChanged` handler committing text cells as aggressively as checkboxes and combo boxes. The revised implementation commits only checkbox and category cells immediately; a name is written back once editing ends, Enter is pressed, or **Finish rename** is clicked. Its self-test enters a multi-character value one character at a time, confirms that the data model is unchanged during editing, and verifies the final commit.
+The published V1.2.4 revision also made the first fix for export-name editing that ended after every character. The cause was a shared `CurrentCellDirtyStateChanged` handler committing text cells as aggressively as checkboxes and combo boxes. Restricting immediate commits to checkbox and category cells fixed ordinary continuous typing. Real use later showed that IME candidate confirmation through Enter could still make DataGridView end the edit, which led to V1.2.5.
 
-### 9. Archive-backed release reconstruction
+### 9. IME-safe naming in V1.2.5
 
-The public history was reconstructed from the seven release archives retained by the user rather than from conversation memory alone. ZIP inventories, source changes, README files, validation notes, test results, timestamps, and SHA-256 hashes were compared:
+V1.2.5 separates export-name editing from DataGridView's temporary built-in editor. A persistent `TextBox` is overlaid on the target name cell and repositioned when the table scrolls, columns or rows resize, or the window changes size. The name column itself is read-only and double-click explicitly opens the overlay, preventing the grid's edit lifecycle from taking control prematurely.
+
+The revision distinguishes IME confirmation from project commit. Enter is consumed by the editor so candidate selection and continued typing do not submit the name. Clicking another cell, changing the selected source, or choosing **Finish naming** sanitizes and commits the value to the project and duplicate group; Esc cancels it. Regression coverage now types Chinese one character at a time, repeatedly simulates Enter, verifies that the model remains unchanged during composition, and then checks both button and click-away commit paths. A dedicated name-edit screenshot entry point supports visual regression of editor placement and button state.
+
+V1.2.5 changes only list naming interaction and its tests. Multi-body scanning, read-only source handling, assembly construction, the STEP macro, and mirrored routing are unchanged.
+
+### 10. Archive-backed release reconstruction
+
+The public history was reconstructed from the eight release archives retained by the user rather than from conversation memory alone. ZIP inventories, source changes, README files, validation notes, test results, timestamps, and SHA-256 hashes were compared:
 
 | Archive | Saved | SHA-256 | File-backed milestone |
 |---|---:|---|---|
@@ -191,10 +208,11 @@ The public history was reconstructed from the seven release archives retained by
 | `Master-Miao-v1.2.3.zip` | 2026-09-04 18:27 | `EA3FC506EFB62A011E43311FC570834067EF0A5A3A87BB7707AB862BA8DA8E36` | Unified the Master Miao product, executable, macro, and report identity; added the user-designed cat-and-wrench artwork, nine-size ICO, and reproducible icon builder. |
 | `Master-Miao-v1.2.4.zip` | 2026-09-04 21:30 | `98BE3F83BD400459EDFCEDF017584428BE72DD6100D6FF2144AFB79132B7C235` | Added same-folder and separate mirrored-tree production routing plus a dedicated folder-layout regression test. |
 | `Master-Miao-v1.2.4-name-edit-fix.zip` | 2026-09-04 22:41 | `7024BE2251793AAA0EA544BFE294FF21AB3BC36D0CA5A0E2503661B4F75AFE6D` | Final V1.2.4 revision: fixed interrupted multi-character export-name editing and added the localized Finish rename action and lifecycle self-test. |
+| `Master-Miao-v1.2.4-name-edit-fix-v2.zip` | 2026-09-04 23:25 | `D508E2100AF9A29ECB7AFEF932D4557C2F94599E2FC73267971352D6A5A4096A` | V1.2.5 input baseline: introduced the persistent overlay editor for Chinese IME safety, Finish naming, click-away commit, and simulated IME Enter regression tests. |
 
-V1.2.0 is not present among the retained archives. Its intermediate existence and failure mode are supported by the V1.2.1 README, test evidence, and source changes, so it is documented as a development build rather than a distributable release. The public repository uses the final revision archive as its current code baseline. Older archives remain evidence only; runtime user data, CAD test models, and old binaries are not published.
+V1.2.0 is not present among the retained archives. Its intermediate existence and failure mode are supported by the V1.2.1 README, test evidence, and source changes, so it is documented as a development build rather than a distributable release. The public repository uses the V2 revision source as the V1.2.5 functional baseline and separately applies the new version identity, bilingual documentation, build, and release packaging. Older archives remain evidence only; runtime user data, CAD test models, and old binaries are not published.
 
-### 10. Current principles and future work
+### 11. Current principles and future work
 
 The project follows four principles: sources stay read-only, formal output is verified first, user sessions are recoverable, and failures are explainable. The code remains in a small number of modules instead of accumulating a new layer for every feature.
 
