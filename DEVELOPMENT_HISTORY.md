@@ -1,5 +1,17 @@
 # Master Miao 开发背景与历程 / Development Background and History
 
+## V1.2.6 稳定性迭代 / Stability iteration — 2026-09-05
+
+用户在 V1.2.5 的基础上提供了系统性修改清单。本次重新审视“输入—保存—读取身份—输出验证—结果清单”的整条链路：旧版持久编辑框虽然修复了即时结束编辑，但自动保存仍会触发提交；同一回归测试已复现旧行为。新版将草稿与已提交模型分离，并使逐项编辑和列表共享模型。
+
+另外，本轮不再把几何摘要当作重复件的最终证明，而是提供明确的人工审查与确认；增加内容哈希、配置和持久实体引用，统一输出名称规划、逐件检查点与失败状态。项目文件使用相对、不可变预览与原子写入；STEP 从检查文件头升级为重新导入几何校验。实际测试、尚未完成的验收和故意保留的安全限制分别记录，不沿用历史成功结论。
+
+The user supplied a systematic checklist against V1.2.5. This iteration reviews the whole editing, persistence, identity, validation and reporting chain. The persistent name editor fixed immediate termination, but autosave could still end an edit; the same regression reproduced the old behavior. Drafts are now separate from committed state, and guided/list editing share the model.
+
+Geometry digests are no longer treated as proof of duplicate parts; explicit human review is required. Content hashes, configurations, persistent references, global output planning, item checkpoints and honest outcomes strengthen export integrity. Projects use relative immutable previews and atomic writes. STEP validation reimports geometry rather than relying on a header. Current evidence and untested boundaries are documented separately from historical successes.
+
+完整本轮变更 / Full iteration details: [V1.2.6_CHANGES.md](V1.2.6_CHANGES.md). 以下内容是旧版本发展历史，不是 V1.2.6 验收证明 / The sections below are historical context, not V1.2.6 acceptance evidence.
+
 ## 中文
 
 ### 1. 项目背景
@@ -84,6 +96,12 @@ V1.2.5 将导出名称编辑从 DataGridView 的临时内置编辑控件中分�
 这一版明确区分“输入法确认”和“项目提交”：Enter 被编辑框消化，只用于输入法选字或继续输入，不会提交名称；点击另一单元格、切换源文件或点击“命名完毕 / Finish naming”才净化名称并写回项目及重复件组；Esc 则取消本次修改。相应自检会逐字符输入中文、反复模拟 Enter、确认数据模型在输入阶段不变，再验证按钮提交和点击其他单元格提交。另增加专用改名界面截图入口，便于回归检查编辑框位置与按钮状态。
 
 V1.2.5 仅调整列表改名交互和对应测试，没有改变多实体读取、源文件只读策略、装配体构建、STEP 宏或双目录归位逻辑。
+
+### 9.1 现场反馈后的编辑链重构
+
+后续真实工作暴露出 V1.2.5 的自检盲区：模拟 Enter 通过并不等于真实中文输入法候选窗稳定；逐项窗口写入数据模型后，后台自动保存还可能从未刷新的主列表反向写回旧值，因此名称和分类会“有时保存、有时消失”。V1.2.6 不再把 V1.2.5 的改名描述当作完成验收。
+
+修订后，列表使用明确声明 Enter 为输入键的独立编辑框，并按实体引用而不是行号提交；逐项模式把名称、分类和导出勾选当作一次提交；自动保存只读取已提交的数据模型，列表永远只是显示投影。回归也从直接调用内部方法升级为点击实际“保存并下一个/上一个”按钮、跨越自动保存周期并核对保存后的 JSON。真实输入法候选窗仍单列为桌面验收项目。
 
 ### 10. 已保存发行包的证据化复盘
 
@@ -195,6 +213,12 @@ The revision distinguishes IME confirmation from project commit. Enter is consum
 
 V1.2.5 changes only list naming interaction and its tests. Multi-body scanning, read-only source handling, assembly construction, the STEP macro, and mirrored routing are unchanged.
 
+### 9.1 Editing-chain redesign after field feedback
+
+Production use exposed gaps in the V1.2.5 checks: simulated Enter did not establish native Chinese IME stability, and autosave could still replay stale main-grid values after the guided window had changed the model. Names and categories could therefore appear to save and later disappear. V1.2.6 no longer treats the V1.2.5 naming description as completed acceptance.
+
+The revision uses a dedicated editor that explicitly owns Enter and commits by body reference rather than row number. Guided name, category and export selection are one commit, autosave reads only committed model state, and the grid is a projection. Regression now clicks the actual Save-and-next/Previous buttons, crosses an autosave period and verifies saved JSON. Native IME candidate-window behavior remains a separate desktop acceptance item.
+
 ### 10. Archive-backed release reconstruction
 
 The public history was reconstructed from the eight release archives retained by the user rather than from conversation memory alone. ZIP inventories, source changes, README files, validation notes, test results, timestamps, and SHA-256 hashes were compared:
@@ -217,3 +241,35 @@ V1.2.0 is not present among the retained archives. Its intermediate existence an
 The project follows four principles: sources stay read-only, formal output is verified first, user sessions are recoverable, and failures are explainable. The code remains in a small number of modules instead of accumulating a new layer for every feature.
 
 Possible future work includes SolidWorks configuration selection, stronger geometric equivalence, cross-version user-data migration, one-click continuation of recent projects, broader visible-desktop automation tests, and signed distribution packages. None of these should weaken source protection or staged commit guarantees.
+
+### 12. 0905-R2：恢复定位与去重交互 / Restoring location and duplicate interaction
+
+用户在实际使用中报告，主文件已在SW打开时定位却提示文件占用，去重勾选也不隐藏重复行。检查发现定位复用了导出磁盘摘要与未保存状态检查，文件共享模式又与SW的可写句柄冲突；去重则被R1新增的人工确认门槛改变了操作顺序。R2把只读的实时高亮与严格导出校验分开，恢复复选框即时折叠/还原，并将每个折叠成员的身份随导出计划传递，在导出前进行真实几何重合核对。
+
+真实SW 2024读取独立副本94体通过；真实WinForms列表94→71→94→71通过。测试进程随后无法连接活动对象，因此实机高亮、真实合并输出未列为通过。详细证据、失败原因及后续验收保留于 [R2_FIX_VALIDATION.md](R2_FIX_VALIDATION.md)，没有继续发布GitHub。
+
+Field feedback showed file-in-use errors when locating an already open source and no visible folding after enabling deduplication. Location had inherited disk-hash and dirty-state export checks with incompatible file sharing; R1's manual-confirmation gate had also changed the original checkbox workflow. R2 separates live highlighting from strict export verification, restores reversible immediate folding, and includes every folded identity in the export plan for kernel congruence checks.
+
+A real SW 2024 scan of an isolated copy returned 94 solids; actual WinForms rows toggled 94/71/94/71. Active-object attachment then failed in the test environment, so live highlighting and actual deduplicated output remain unaccepted. Evidence and limits are recorded in the linked R2 document. GitHub publication remains stopped.
+
+### 13. 0905-R3：减少整理中断与纯 STEP 交付 / Issue navigation and STEP-only delivery
+
+用户在 V1.2.6 上提出：校验提示应直接找到对应条目，支持逐项修正；定位和合并操作需要可自定义快捷键；导出中应显示百分比及“喵师傅正在施工”的操作提醒；生产交付还需要仅 STEP 的选择。开发以用户保存的 R2 压缩包为基线，在独立目录修改，没有回退到旧版本，也没有迁移或清理用户工作记录。
+
+本次让问题队列关联稳定实体 ID，复用原校验规则和编辑提交动作；在原设置窗口增加应用内按键绑定，输入法和忙时优先；通过模态进度窗口阻止主页面修改，不强锁系统或结束 SW 会话。仅 STEP 使用原装配体宏与验证路线，但将中间 SLDPRT 放到任务暂存区，并从交付计数和报表路径中排除；异常恢复保留可能被宏占用的中间件。代码继续使用已有模块，中英文同步。
+
+120条合成记录的真实 WinForms 导航、逐项快捷键与草稿、模态进度、仅 STEP 路由/清理/恢复，以及旧编辑、25项项目存储、目录/报表/定位接口等自动回归通过。没有真实 CAD 仅 STEP 导出验收，不能将文件路径哨兵测试当成几何成功证据。交付标识为 `V1.2.6 · 0905-R3`，保留历史包和记录，不发布 GitHub。详情见 [R3_CHANGES_AND_TESTS.md](R3_CHANGES_AND_TESTS.md)。
+
+The user requested direct navigation from validation warnings, sequential corrections, configurable locate/merge shortcuts, a modal percentage/construction notice, and STEP-only production delivery. Development started from the supplied R2 archive in an isolated directory, without reverting versions or migrating/deleting work records. Issue queues use stable body IDs and existing validation/edit-commit logic. App-local bindings defer to text/IME editing and busy work. Modal progress blocks organizer edits without locking the OS or terminating SW. STEP-only retains the verified assembly-macro route while staging native prerequisites privately and excluding them from delivery counts and report paths; crash recovery preserves potentially live macro inputs. Existing modules and both languages are retained.
+
+Actual WinForms tests with 120 synthetic records, guided shortcuts/draft persistence, modal progress, STEP-only routing/cleanup/recovery and previous editing/storage/report/identity contracts passed. Real CAD STEP-only output remains unaccepted; sentinel files are not geometry evidence. The local package is marked V1.2.6 / 0905-R3, old archives and records remain, and GitHub publication stays stopped. See the linked R3 record for reproducible tests and limitations.
+
+### 14. 0905-R4：冻结导出后台，专注界面 / Frozen backend, focused UI refinement
+
+用户反馈原有导出流程已经顺畅，要求不要继续修改或反复测试可用的导出逻辑，把优化集中在 UI 和操作体验。R4 因此冻结 R3 后台，以文件摘要和关键方法正文对比确认读取、拆分、STEP、装配体、几何、存储和提交语义未变。界面提高字号和对比度，将拥挤横排按钮分组，保留直接全选；增加侧栏收放，重排路径/格式区，突出逐项保存，给分类关系图独立的大窗口。分类使用原控件与事件，退出展开窗口时原位归还，不建立第二套分类数据。
+
+中英文1540/1100窗口、94条现有记录与缩略图、菜单动作、分类展开返回、名称/自动保存回归通过，读取的原项目逐字节未变。本轮没有连接 SolidWorks 或进行 CAD 导出实验。R4 采用独立目录和明确版本号，提醒用户先保存旧项目再打开，以免将新目录的空白启动界面误认为工作记录丢失。详情见 [R4_UI_NOTES.md](R4_UI_NOTES.md)。
+
+The user confirmed the export workflow was already smooth and asked to focus on UI/interaction instead of modifying or repeatedly testing working CAD logic. R4 freezes R3's backend, auditing file hashes and protected method text for scanning, splitting, STEP, assemblies, geometry, storage and commit semantics. Typography/contrast, grouped tools, one-click selection, sidebar toggling, export-area layout and guided-mode emphasis were refined. Classification expands the existing controls into a larger workspace and returns them afterward; no duplicate classification model is introduced.
+
+Bilingual 1540/1100 layouts, 94 saved records/previews, menus, workspace restoration and editing/autosave regression passed. The original project remained byte-identical. No SolidWorks connection or CAD export experiment was performed. The independent R4 folder/version and save-then-open guidance avoid mistaking a fresh portable UI for lost work. See the R4 notes for evidence and limitations.

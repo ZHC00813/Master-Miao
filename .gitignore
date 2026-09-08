@@ -2,6 +2,9 @@
 /build/
 /bin/
 /obj/
+/validation-v126/
+/validation-r3/
+/validation-r4/
 /.vs/
 *.user
 *.suo

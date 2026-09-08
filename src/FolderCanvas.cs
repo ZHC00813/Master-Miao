@@ -15,6 +15,7 @@ namespace SWBodyOrganizer
         private Point mouseDown;
 
         public event EventHandler TreeChanged;
+        public event EventHandler TreeChanging;
         public event EventHandler SelectionChanged;
 
         public FolderCanvas()
@@ -22,7 +23,7 @@ namespace SWBodyOrganizer
             DoubleBuffered = true;
             AutoScroll = true;
             BackColor = Color.White;
-            Font = new Font("Microsoft YaHei UI", 9F);
+            Font = UiBrand.CreateFont(UiBrand.BaseFontSize);
             SetStyle(ControlStyles.ResizeRedraw, true);
         }
 
@@ -169,12 +170,15 @@ namespace SWBodyOrganizer
             }
             if (CategoryRules.IsDescendant(nodes, target.Id, moving.Id))
             {
-                MessageBox.Show(this, "不能把文件夹拖入它自己的下级。", "父子关系无效", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, UiText.T("不能把文件夹拖入它自己的下级。", "A folder cannot be moved inside its descendant."), UiText.T("父子关系无效", "Invalid hierarchy"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 Invalidate();
                 return;
             }
             if (moving.ParentId != target.Id)
             {
+                if (nodes.Any(node => node.Id != moving.Id && node.ParentId == target.Id && string.Equals(node.Name, moving.Name, StringComparison.OrdinalIgnoreCase)))
+                { MessageBox.Show(this, UiText.T("目标文件夹已有同名子目录。", "The destination already contains a folder with this name.")); return; }
+                if (TreeChanging != null) TreeChanging(this, EventArgs.Empty);
                 moving.ParentId = target.Id;
                 RebuildLayout();
                 Invalidate();

@@ -61,7 +61,8 @@ namespace SWBodyOrganizer
             foreach (AssemblyResultItem assembly in assemblies)
             {
                 List<ExportResultItem> parts = allParts.Where(item => string.Equals(item.SourcePath, assembly.SourcePath, StringComparison.OrdinalIgnoreCase)).ToList();
-                if (!WorkerMain.IsSuccessful(assembly.Status) || string.IsNullOrWhiteSpace(assembly.StepSourceAssemblyPath) || !File.Exists(assembly.StepSourceAssemblyPath))
+                if (string.IsNullOrWhiteSpace(assembly.StepSourceAssemblyPath) || !File.Exists(assembly.StepSourceAssemblyPath) ||
+                    parts.Any(part => !WorkerMain.IsSuccessful(part.SldprtStatus) || part.SldprtVerification != "几何验证通过"))
                 {
                     assembly.StepStatus = "失败";
                     MarkPendingPartsFailed(parts, "用于批量 STEP 导出的装配体不可用：" + assembly.Message);
@@ -108,7 +109,7 @@ namespace SWBodyOrganizer
                 FinalizeResponse(request, response);
                 return;
             }
-            WriteMacroJob(jobPath, logPath, session.OriginalActiveTitle, jobs);
+            WriteMacroJob(jobPath, logPath, session.OriginalActiveTitle, request.CancelFile, jobs);
 
             try
             {
@@ -152,15 +153,32 @@ namespace SWBodyOrganizer
 
                 string log = File.ReadAllText(logPath, Encoding.UTF8);
                 ValidateMacroLog(log, jobs.Count);
+                WorkerMain.CheckCancellation(request.CancelFile);
                 WorkerMain.Emit("PROGRESS", 97, "归类 STEP", "正在校验并移动到零件分类文件夹");
-                foreach (StepJob job in jobs) CommitJob(request, job);
+                foreach (StepJob job in jobs)
+                {
+                    WorkerMain.CheckCancellation(request.CancelFile);
+                    try { ValidateJobLog(log, job.Index); CommitJob(request, job, app, response); }
+                    catch (OperationCanceledException) { throw; }
+                    catch (SolidWorksInterferenceException) { throw; }
+                    catch (Exception ex) { MarkJobsFailed(new[] { job }, ex.Message); }
+                    finally { WorkerMain.Checkpoint(request, response); }
+                }
             }
             catch (SolidWorksInterferenceException ex)
             {
                 MarkJobsFailed(jobs, ex.Message);
                 throw;
             }
-            catch (OperationCanceledException) { throw; }
+            catch (OperationCanceledException)
+            {
+                foreach (StepJob job in jobs)
+                {
+                    if (!WorkerMain.IsSuccessful(job.Assembly.StepStatus)) job.Assembly.StepStatus = "取消";
+                    foreach (ExportResultItem part in job.Parts.Where(item => item.StepStatus == "待批量导出")) part.StepStatus = "取消";
+                }
+                throw;
+            }
             catch (Exception ex)
             {
                 MarkJobsFailed(jobs, ex.Message);
@@ -175,7 +193,7 @@ namespace SWBodyOrganizer
             FinalizeResponse(request, response);
         }
 
-        private static void CommitJob(WorkerRequest request, StepJob job)
+        private static void CommitJob(WorkerRequest request, StepJob job, ISldWorks app, WorkerResponse response)
         {
             if (!IsValidStep(job.StageAssemblyStep))
                 throw new InvalidDataException("装配体 STEP 没有通过格式校验：" + Path.GetFileName(job.StageAssemblyStep));
@@ -192,64 +210,62 @@ namespace SWBodyOrganizer
                 }
                 try
                 {
-                    if (File.Exists(part.StepPath))
-                    {
-                        if (request.ExportSettings.ConflictPolicy == "跳过")
-                        {
-                            part.StepStatus = "跳过（已存在）";
-                            continue;
-                        }
-                        BackupExisting(part.StepPath);
-                    }
-                    File.Copy(stagePart, part.StepPath, false);
-                    if (!IsValidStep(part.StepPath)) throw new InvalidDataException("复制后的 STEP 未通过格式校验。");
+                    part.StepVerification = "文件头通过";
+                    WorkerMain.CheckCancellation(request.CancelFile);
+                    ExportIntegrity.VerifyStep(app, stagePart, new[] { part }, request.CancelFile, level => part.StepVerification = level);
+                    part.StepVerification = "几何验证通过";
+                    WorkerMain.CheckCancellation(request.CancelFile);
+                    ExportIntegrity.CommitFile(stagePart, part.StepPath, request.ExportSettings.ConflictPolicy == "覆盖", WorkerMain.InputPaths(request));
                     part.StepStatus = "成功";
                 }
+                catch (OperationCanceledException) { throw; }
+                catch (SolidWorksInterferenceException) { throw; }
                 catch (Exception ex)
                 {
                     part.StepStatus = "失败";
                     AppendMessage(part, ex.Message);
                 }
+                finally { WorkerMain.Checkpoint(request, response); }
             }
 
-            string finalAssemblyStep = ResolveAssemblyStepPath(request, job.Assembly);
+            string finalAssemblyStep = job.Assembly.AssemblyStepPath;
             job.Assembly.AssemblyStepPath = finalAssemblyStep;
             try
             {
-                if (File.Exists(finalAssemblyStep))
+                if (File.Exists(finalAssemblyStep) && request.ExportSettings.ConflictPolicy == "跳过")
                 {
-                    if (request.ExportSettings.ConflictPolicy == "跳过")
-                    {
-                        job.Assembly.StepStatus = "跳过（已存在）";
-                    }
-                    else
-                    {
-                        BackupExisting(finalAssemblyStep);
-                        File.Copy(job.StageAssemblyStep, finalAssemblyStep, false);
-                        job.Assembly.StepStatus = "成功";
-                    }
+                    job.Assembly.StepStatus = "跳过（未验证）";
                 }
                 else
                 {
-                    File.Copy(job.StageAssemblyStep, finalAssemblyStep, false);
+                    WorkerMain.CheckCancellation(request.CancelFile);
+                    ExportIntegrity.VerifyStep(app, job.StageAssemblyStep, job.Parts, request.CancelFile);
+                    WorkerMain.CheckCancellation(request.CancelFile);
+                    ExportIntegrity.CommitFile(job.StageAssemblyStep, finalAssemblyStep, request.ExportSettings.ConflictPolicy == "覆盖", WorkerMain.InputPaths(request));
                     job.Assembly.StepStatus = "成功";
                 }
-                if (!IsValidStep(finalAssemblyStep)) throw new InvalidDataException("正式装配体 STEP 未通过格式校验。");
             }
+            catch (OperationCanceledException) { throw; }
+            catch (SolidWorksInterferenceException) { throw; }
             catch (Exception ex)
             {
                 job.Assembly.StepStatus = "失败";
                 job.Assembly.Message = AppendText(job.Assembly.Message, ex.Message);
             }
-            foreach (ExportResultItem part in job.Parts) part.AssemblyStepPath = job.Assembly.AssemblyStepPath;
+            foreach (ExportResultItem part in job.Parts)
+            {
+                part.AssemblyStepPath = job.Assembly.AssemblyStepPath;
+                part.AssemblyStepStatus = job.Assembly.StepStatus;
+            }
         }
 
-        private static void WriteMacroJob(string jobPath, string logPath, string originalActiveTitle, IEnumerable<StepJob> jobs)
+        private static void WriteMacroJob(string jobPath, string logPath, string originalActiveTitle, string cancelFile, IEnumerable<StepJob> jobs)
         {
             List<string> lines = new List<string>
             {
                 ToBase64(logPath),
-                ToBase64(originalActiveTitle)
+                ToBase64(originalActiveTitle),
+                ToBase64(cancelFile)
             };
             lines.AddRange(jobs.Select(job => ToBase64(job.Assembly.StepSourceAssemblyPath) + "\t" + ToBase64(job.StageAssemblyStep)));
             File.WriteAllLines(jobPath, lines.ToArray(), Encoding.UTF8);
@@ -262,15 +278,18 @@ namespace SWBodyOrganizer
             if (!lines.Any(line => line == "DONE")) throw new InvalidOperationException("SolidWorks STEP 宏没有正常完成。");
             string fatal = lines.FirstOrDefault(line => line.StartsWith("FATAL|", StringComparison.Ordinal));
             if (!string.IsNullOrWhiteSpace(fatal)) throw new InvalidOperationException("SolidWorks STEP 宏异常：" + fatal);
-            for (int index = 0; index < expectedJobs; index++)
-            {
+        }
+
+        private static void ValidateJobLog(string log, int index)
+        {
+                string[] lines = log.Replace("\r", string.Empty).Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
                 string prefix = "ITEM|" + index.ToString(CultureInfo.InvariantCulture) + "|";
                 string line = lines.FirstOrDefault(value => value.StartsWith(prefix, StringComparison.Ordinal));
+                if (!string.IsNullOrWhiteSpace(line) && line.IndexOf("|CANCELLED|", StringComparison.Ordinal) >= 0) throw new OperationCanceledException();
                 if (!string.IsNullOrWhiteSpace(line) && line.IndexOf("|INTERFERENCE|", StringComparison.Ordinal) >= 0)
                     throw new SolidWorksInterferenceException("检测到 STEP 导出期间 SolidWorks 活动文档发生变化。为保护正式输出，本次任务已停止。");
                 if (string.IsNullOrWhiteSpace(line) || !line.StartsWith(prefix + "OK|0|0", StringComparison.Ordinal))
                     throw new InvalidOperationException("装配体 STEP 导出失败：" + (line ?? (prefix + "NO_RESULT")));
-            }
         }
 
         private static bool HasCompletedLog(string path)
@@ -289,34 +308,16 @@ namespace SWBodyOrganizer
                 {
                     char[] buffer = new char[64];
                     int read = reader.Read(buffer, 0, buffer.Length);
-                    return new string(buffer, 0, read).TrimStart().StartsWith("ISO-10303-21;", StringComparison.Ordinal);
+                    if (!new string(buffer, 0, read).TrimStart().StartsWith("ISO-10303-21;", StringComparison.Ordinal)) return false;
+                }
+                using (FileStream stream = File.OpenRead(path))
+                {
+                    stream.Seek(Math.Max(0, stream.Length - 256), SeekOrigin.Begin);
+                    using (StreamReader reader = new StreamReader(stream, Encoding.ASCII))
+                        return reader.ReadToEnd().IndexOf("END-ISO-10303-21;", StringComparison.Ordinal) >= 0;
                 }
             }
             catch { return false; }
-        }
-
-        private static string ResolveAssemblyStepPath(WorkerRequest request, AssemblyResultItem assembly)
-        {
-            string stem = !string.IsNullOrWhiteSpace(assembly.AssemblyPath)
-                ? Path.GetFileNameWithoutExtension(assembly.AssemblyPath)
-                : NameRules.SafeStem(Path.GetFileNameWithoutExtension(assembly.SourcePath), "多实体零件") + "_拆分装配体";
-            string outputRoot = WorkerMain.GetStepOutputRoot(request);
-            Directory.CreateDirectory(outputRoot);
-            string candidate = Path.Combine(outputRoot, stem + ".STEP");
-            if (request.ExportSettings.ConflictPolicy != "自动编号" || !File.Exists(candidate)) return candidate;
-            for (int index = 2; index < 10000; index++)
-            {
-                candidate = Path.Combine(outputRoot, stem + "_" + index.ToString(CultureInfo.InvariantCulture) + ".STEP");
-                if (!File.Exists(candidate)) return candidate;
-            }
-            throw new IOException("无法为装配体 STEP 生成可用名称。");
-        }
-
-        private static void BackupExisting(string path)
-        {
-            string folder = Path.Combine(AppPaths.Backups, DateTime.Now.ToString("yyyyMMdd_HHmmss_fff", CultureInfo.InvariantCulture));
-            Directory.CreateDirectory(folder);
-            File.Move(path, Path.Combine(folder, Path.GetFileName(path)));
         }
 
         private static void FinalizeResponse(WorkerRequest request, WorkerResponse response)
@@ -332,6 +333,10 @@ namespace SWBodyOrganizer
             response.Message = string.Format("导出完成：零件 {0}/{1} 项成功；STEP 装配批次 {2}/{3} 个成功{4}。",
                 successfulParts, parts.Count, successfulAssemblySteps, assemblies.Count,
                 request.ExportSettings.CreateAssembly ? string.Format("；装配体 {0}/{1} 个成功", successfulAssemblies, assemblies.Count) : string.Empty);
+            foreach (AssemblyResultItem assembly in assemblies)
+                foreach (ExportResultItem part in parts.Where(item => item.SourcePath == assembly.SourcePath))
+                    part.AssemblyStepStatus = assembly.StepStatus;
+            WorkerMain.Checkpoint(request, response);
             WorkerMain.Emit("PROGRESS", 100, "完成", response.Message);
         }
 
@@ -347,7 +352,7 @@ namespace SWBodyOrganizer
 
         private static void MarkPendingPartsFailed(IEnumerable<ExportResultItem> parts, string message)
         {
-            foreach (ExportResultItem part in parts.Where(item => !WorkerMain.IsSuccessful(item.StepStatus)))
+            foreach (ExportResultItem part in parts.Where(item => !WorkerMain.IsSuccessful(item.StepStatus) && !(item.StepStatus ?? string.Empty).StartsWith("跳过", StringComparison.Ordinal)))
             {
                 part.StepStatus = "失败";
                 AppendMessage(part, message);

@@ -1,14 +1,22 @@
+param(
+    [string]$SolidWorksApiPath = $env:MASTER_MIAO_SW_API
+)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $compiler = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-$swApi = 'C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\api\redist'
+$swApi = if ([string]::IsNullOrWhiteSpace($SolidWorksApiPath)) { 'C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\api\redist' } else { [IO.Path]::GetFullPath($SolidWorksApiPath) }
 $output = Join-Path $projectRoot 'build'
 $macroSource = Join-Path $projectRoot 'macro\StepMacro.cs'
 $iconSource = Join-Path $projectRoot 'assets\MasterMiao-logo.png'
 $iconOutput = Join-Path $output 'MasterMiao.ico'
 
 if (-not (Test-Path -LiteralPath $compiler)) { throw '.NET Framework C# compiler was not found.' }
-if (-not (Test-Path -LiteralPath (Join-Path $swApi 'SolidWorks.Interop.sldworks.dll'))) { throw 'SolidWorks API interop assemblies were not found.' }
+foreach ($assembly in @('SolidWorks.Interop.sldworks.dll', 'SolidWorks.Interop.swconst.dll')) {
+    $assemblyPath = Join-Path $swApi $assembly
+    if (-not (Test-Path -LiteralPath $assemblyPath -PathType Leaf)) {
+        throw "Missing SolidWorks API assembly: $assemblyPath. Use -SolidWorksApiPath '<api\redist folder>' or MASTER_MIAO_SW_API to configure the path."
+    }
+}
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 & (Join-Path $projectRoot 'tools\BuildIcon.ps1') -Source $iconSource -Destination $iconOutput
 
@@ -39,7 +47,12 @@ $arguments = @(
 & $compiler $arguments
 if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE."
 }
-Copy-Item -LiteralPath (Join-Path $swApi 'SolidWorks.Interop.sldworks.dll') -Destination $output -Force
-Copy-Item -LiteralPath (Join-Path $swApi 'SolidWorks.Interop.swconst.dll') -Destination $output -Force
+foreach ($assembly in @('SolidWorks.Interop.sldworks.dll', 'SolidWorks.Interop.swconst.dll')) {
+    $sourceAssembly = Join-Path $swApi $assembly
+    $targetAssembly = Join-Path $output $assembly
+    $sameAssembly = (Test-Path -LiteralPath $targetAssembly -PathType Leaf) -and
+        ((Get-FileHash -LiteralPath $sourceAssembly -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $targetAssembly -Algorithm SHA256).Hash)
+    if (-not $sameAssembly) { Copy-Item -LiteralPath $sourceAssembly -Destination $targetAssembly -Force }
+}
 Copy-Item -LiteralPath (Join-Path $projectRoot 'MasterMiao.exe.config') -Destination $output -Force
 Write-Host "Build completed: $(Join-Path $output 'MasterMiao.exe')"

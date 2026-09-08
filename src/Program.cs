@@ -11,7 +11,9 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("读取、预览、分类并安全导出 SolidWorks 多实体零件与原位装配体")]
 [assembly: AssemblyCompany("Master Miao")]
 [assembly: AssemblyProduct("Master Miao")]
-[assembly: AssemblyVersion("1.2.5.0")]
+[assembly: AssemblyVersion("1.2.6.0")]
+[assembly: AssemblyFileVersion("1.2.6.4")]
+[assembly: AssemblyInformationalVersion("1.2.6-0905-R4")]
 [assembly: ComVisible(false)]
 
 namespace SWBodyOrganizer
@@ -22,6 +24,25 @@ namespace SWBodyOrganizer
 
         [STAThread]
         private static int Main(string[] args)
+        {
+            try { return Run(args); }
+            catch (Exception ex)
+            {
+                string diagnostic = "Master Miao 启动失败 / Startup failed\n\n" + ex;
+                try
+                {
+                    string log = Path.Combine(Path.GetTempPath(), "MasterMiao-startup-" + Guid.NewGuid().ToString("N") + ".log");
+                    File.WriteAllText(log, diagnostic);
+                    diagnostic += "\n\n诊断日志 / Diagnostic log: " + log;
+                }
+                catch { }
+                if (args.Length > 0) Console.Error.WriteLine(diagnostic);
+                else MessageBox.Show(diagnostic, "Master Miao", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return 1;
+            }
+        }
+
+        private static int Run(string[] args)
         {
             AppPaths.Ensure();
             UserSettingsStore.Load();
@@ -77,6 +98,8 @@ namespace SWBodyOrganizer
             Application.SetCompatibleTextRenderingDefault(false);
             try
             {
+                if (!string.IsNullOrWhiteSpace(AppPaths.StartupDiagnostic))
+                    MessageBox.Show(AppPaths.StartupDiagnostic, "Master Miao", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 if (UserSettingsStore.Current.AskLanguageOnStartup)
                 {
                     using (LanguageDialog language = new LanguageDialog(true))
@@ -190,8 +213,8 @@ namespace SWBodyOrganizer
                 form.LoadProjectForScreenshot(projectPath, false, false);
                 form.SaveProjectForSelfTest(outputPath);
             }
-            AppProject saved = JsonFile.Load<AppProject>(outputPath);
-            if (saved.SchemaVersion != 2 || saved.Sources.Count == 0 || saved.AllBodies().Any(body => !string.IsNullOrWhiteSpace(body.PreviewIso) && !File.Exists(body.PreviewIso))) return 2;
+            AppProject saved = ProjectStore.Load(outputPath);
+            if (saved.SchemaVersion != 3 || saved.Sources.Count == 0 || saved.AllBodies().Any(body => !string.IsNullOrWhiteSpace(body.PreviewIso) && !File.Exists(body.PreviewIso))) return 2;
             return 0;
         }
 

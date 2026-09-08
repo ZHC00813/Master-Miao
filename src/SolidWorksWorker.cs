@@ -26,6 +26,7 @@ namespace SWBodyOrganizer
         public bool KeepApplicationOpen;
         public string OriginalActiveTitle = string.Empty;
         public string OriginalActivePath = string.Empty;
+        public Mutex TaskLease;
     }
 
     internal sealed class SolidWorksInterferenceException : InvalidOperationException
@@ -44,6 +45,10 @@ namespace SWBodyOrganizer
             try
             {
                 request = JsonFile.Load<WorkerRequest>(requestPath);
+                response.TaskId = request.TaskId;
+                response.StartedUtc = DateTime.UtcNow;
+                if (request.Operation == "export")
+                    response.ExportResults = request.ExportItems.Select(plan => CreateResult(plan, request.ExportSettings)).ToList();
                 app = StartSolidWorks(request, out session);
                 response.SolidWorksRevision = app.RevisionNumber() ?? string.Empty;
                 response.TemplatePath = FindPartTemplate(app);
@@ -74,6 +79,7 @@ namespace SWBodyOrganizer
                         response.RetainedSourceDocumentCount = VerifyRetainedSourceDocuments(app, response.Sources);
                         session.KeepApplicationOpen = true;
                         response.SolidWorksKeptOpen = true;
+                        JsonFile.Save(HandoffPath(session.ProcessId), session.ProcessStartTimeUtcTicks);
                     }
                 }
                 else if (string.Equals(request.Operation, "export", StringComparison.OrdinalIgnoreCase))
@@ -104,7 +110,16 @@ namespace SWBodyOrganizer
             }
             finally
             {
+                if (request != null) { CompletePending(request, response); FinishStepOnly(request, response, true); }
+                ProtectUnexpectedDocuments(app, session, request, response);
                 ShutdownSolidWorks(ref app, session);
+                response.CompletedUtc = DateTime.UtcNow;
+                try { if (request != null) Checkpoint(request, response); }
+                catch (Exception checkpointError)
+                {
+                    response.Success = false;
+                    response.Message += " 检查点保存失败 / Checkpoint save failed: " + checkpointError.Message;
+                }
                 try { JsonFile.Save(responsePath, response); } catch { }
             }
             return response.Success ? 0 : (response.Cancelled ? 2 : 1);
@@ -164,7 +179,48 @@ namespace SWBodyOrganizer
             GC.Collect();
             GC.WaitForPendingFinalizers();
             if (session.OwnsApplication && !session.KeepApplicationOpen) StopOwnedProcess(session.ProcessId, session.ProcessStartTimeUtcTicks);
+            if (session.TaskLease != null)
+            {
+                try { session.TaskLease.ReleaseMutex(); } catch { }
+                session.TaskLease.Dispose(); session.TaskLease = null;
+            }
             session.NativeShutdownComplete = true;
+        }
+
+        private static void ProtectUnexpectedDocuments(ISldWorks app, SolidWorksSessionContext session, WorkerRequest request, WorkerResponse response)
+        {
+            if (app == null || session == null || !session.OwnsApplication || session.KeepApplicationOpen) return;
+            object[] documents = null;
+            try
+            {
+                HashSet<string> expected = new HashSet<string>(InputPaths(request).Select(Path.GetFullPath), StringComparer.OrdinalIgnoreCase);
+                foreach (ExportResultItem result in response.ExportResults)
+                    foreach (string path in new[] { result.SldprtPath, result.AssemblyPath })
+                        if (!string.IsNullOrWhiteSpace(path)) expected.Add(Path.GetFullPath(path));
+                string stage = string.IsNullOrWhiteSpace(request.StagingRoot) ? string.Empty : Path.GetFullPath(request.StagingRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                documents = app.GetDocuments() as object[] ?? new object[0];
+                foreach (object value in documents)
+                {
+                    IModelDoc2 model = value as IModelDoc2;
+                    string path = model == null ? string.Empty : model.GetPathName();
+                    if (model == null || model.GetSaveFlag() || string.IsNullOrWhiteSpace(path) ||
+                        (!expected.Contains(Path.GetFullPath(path)) && (stage.Length == 0 || !Path.GetFullPath(path).StartsWith(stage, StringComparison.OrdinalIgnoreCase))))
+                    {
+                        session.KeepApplicationOpen = true;
+                        response.SolidWorksKeptOpen = true;
+                        response.Message += " 检测到未保存或任务之外的文档，已保留 SolidWorks 会话。 / SolidWorks retained because an unsaved or unrelated document is open.";
+                        JsonFile.Save(HandoffPath(session.ProcessId), session.ProcessStartTimeUtcTicks);
+                        break;
+                    }
+                }
+            }
+            catch
+            {
+                // An unresponsive document inventory is not authority to kill a user's work.
+                session.KeepApplicationOpen = true;
+                response.SolidWorksKeptOpen = true;
+            }
+            finally { if (documents != null) foreach (object value in documents) ExportIntegrity.Release(value); }
         }
 
         private static ISldWorks StartSolidWorks(WorkerRequest request, out SolidWorksSessionContext session)
@@ -182,7 +238,7 @@ namespace SWBodyOrganizer
                 if (existingProcessIds.Count > 1)
                     throw new InvalidOperationException("检测到多个 SolidWorks 进程。为避免连接到错误窗口，请只保留需要复用的一个 SolidWorks 会话后重试。");
                 object value;
-                bool authorizedLaunch = request.AuthorizedSolidWorksProcessId > 0;
+                bool authorizedLaunch = request.AuthorizedSolidWorksProcessId > 0 && !WasHandedOff(request);
                 if (authorizedLaunch)
                 {
                     session.ProcessId = request.AuthorizedSolidWorksProcessId;
@@ -211,6 +267,16 @@ namespace SWBodyOrganizer
                 if (value == null) throw new InvalidOperationException("无法启动 SolidWorks。");
                 app = (ISldWorks)value;
                 int processId = app.GetProcessID();
+                session.TaskLease = new Mutex(false, "Local\\MasterMiao.SolidWorks." + processId);
+                bool acquired;
+                try { acquired = session.TaskLease.WaitOne(0); }
+                catch (AbandonedMutexException) { acquired = true; }
+                if (!acquired)
+                {
+                    session.OwnsApplication = false;
+                    session.TaskLease.Dispose(); session.TaskLease = null;
+                    throw new InvalidOperationException("另一个 Master Miao 任务正在使用此 SolidWorks 会话。 / Another Master Miao task is using this SolidWorks session.");
+                }
                 if ((session.WasRunning || authorizedLaunch) && !existingProcessIds.Contains(processId))
                     throw new InvalidOperationException("SolidWorks 活动对象与检测到的用户窗口不一致，本次操作已停止。");
                 session.ProcessId = processId;
@@ -262,6 +328,17 @@ namespace SWBodyOrganizer
                 Thread.Sleep(500);
             }
             throw new InvalidOperationException("SolidWorks 界面已启动，但 90 秒内未能连接自动化接口。请确认程序与 SolidWorks 使用相同权限运行。", lastError);
+        }
+
+        private static string HandoffPath(int processId)
+        {
+            return Path.Combine(AppPaths.Jobs, "solidworks-handedoff-" + processId + ".json");
+        }
+
+        private static bool WasHandedOff(WorkerRequest request)
+        {
+            string marker = HandoffPath(request.AuthorizedSolidWorksProcessId);
+            return File.Exists(marker) && JsonFile.Load<long>(marker) == request.AuthorizedSolidWorksStartTimeUtcTicks;
         }
 
         private static void CaptureActiveDocument(ISldWorks app, SolidWorksSessionContext session)
@@ -359,7 +436,13 @@ namespace SWBodyOrganizer
         {
             if (request.Sources == null || request.Sources.Count == 0) throw new InvalidOperationException("没有需要读取的源文件。");
             if (string.IsNullOrWhiteSpace(response.TemplatePath)) throw new InvalidOperationException("没有找到可用的 SolidWorks 零件模板。");
+            // Keep scanning compatible with V1.2.5: one linear pass over each body.
+            // Export-time identity checks remain strict, but a scan must not reject a
+            // document merely because SolidWorks marked it dirty after opening it.
             List<SourceRecord> scanned = new List<SourceRecord>();
+            // Keep completed/failed source records available if a later source is
+            // cancelled or interrupted before normal completion.
+            response.Sources = scanned;
 
             for (int fileIndex = 0; fileIndex < request.Sources.Count; fileIndex++)
             {
@@ -377,12 +460,15 @@ namespace SWBodyOrganizer
                 IPartDoc part = null;
                 string title = string.Empty;
                 bool wasAlreadyOpen = false;
+                bool hasUnsavedState = false;
                 try
                 {
                     FileInfo info = new FileInfo(source.Path);
                     if (!info.Exists) throw new FileNotFoundException("源文件不存在。", source.Path);
                     source.Length = info.Length;
                     source.LastWriteTicks = info.LastWriteTimeUtc.Ticks;
+                    source.Path = Path.GetFullPath(source.Path);
+                    source.ContentSha256 = ExportIntegrity.FileHash(source.Path);
                     int openErrors = 0, openWarnings = 0;
                     int options = (int)swOpenDocOptions_e.swOpenDocOptions_Silent | (int)swOpenDocOptions_e.swOpenDocOptions_ReadOnly;
                     Emit("PROGRESS", Percent(fileIndex, request.Sources.Count, 5), "读取文件", source.Name);
@@ -391,7 +477,8 @@ namespace SWBodyOrganizer
                     if (model == null) model = app.OpenDoc6(source.Path, (int)swDocumentTypes_e.swDocPART, options, string.Empty, ref openErrors, ref openWarnings);
                     if (model == null) throw new InvalidOperationException(string.Format("无法打开文件，错误={0}，警告={1}。", openErrors, openWarnings));
                     title = model.GetTitle();
-                    try { source.Configuration = model.ConfigurationManager.ActiveConfiguration.Name; } catch { source.Configuration = string.Empty; }
+                    try { hasUnsavedState = model.GetSaveFlag(); } catch { }
+                    source.Configuration = ExportIntegrity.Configuration(model);
                     part = (IPartDoc)model;
                     object[] bodies = part.GetBodies2((int)swBodyType_e.swSolidBody, false) as object[] ?? new object[0];
                     source.BodyCount = bodies.Length;
@@ -403,47 +490,56 @@ namespace SWBodyOrganizer
                     {
                         CheckCancellation(request.CancelFile);
                         IBody2 body = (IBody2)bodies[index];
-                        int overall = Percent(fileIndex + ((index + 1.0) / Math.Max(1, bodies.Length)), request.Sources.Count, 5);
-                        Emit("PROGRESS", overall, "生成预览", string.Format("{0}：实体 {1}/{2}", source.Name, index + 1, bodies.Length));
-                        string originalName = body.Name ?? ("实体" + (index + 1));
-                        BodyRecord item = new BodyRecord
+                        try
                         {
-                            SourceId = source.Id,
-                            SourcePath = source.Path,
-                            SourceName = source.Name,
-                            Index = index,
-                            OriginalName = originalName,
-                            ExportName = string.Format("{0:D3}_{1}", index + 1, NameRules.SafeStem(originalName, "实体" + (index + 1))),
-                            CategoryId = CategoryNode.UnclassifiedId,
-                            ExportSelected = true,
-                            GeometryKey = BuildGeometryKey(body),
-                            Status = "已读取"
-                        };
-                        if (request.GeneratePreviews)
-                        {
-                            try
+                            int overall = Percent(fileIndex + ((index + 1.0) / Math.Max(1, bodies.Length)), request.Sources.Count, 5);
+                            Emit("PROGRESS", overall, "生成预览", string.Format("{0}：实体 {1}/{2}", source.Name, index + 1, bodies.Length));
+                            string originalName = body.Name ?? ("实体" + (index + 1));
+                            BodyRecord item = new BodyRecord
                             {
-                                string suffix = item.GeometryKey.Substring(0, Math.Min(12, item.GeometryKey.Length));
-                                string bodyCache = Path.Combine(sourceCache, string.Format("{0:D4}_{1}", index + 1, suffix));
-                                Directory.CreateDirectory(bodyCache);
-                                GeneratePreviews(app, model, body, response.TemplatePath, bodyCache, item);
-                            }
-                            catch (Exception previewError)
+                                SourceId = source.Id,
+                                SourcePath = source.Path,
+                                SourceName = source.Name,
+                                Index = index,
+                                OriginalName = originalName,
+                                ExportName = string.Format("{0:D3}_{1}", index + 1, NameRules.SafeStem(originalName, "实体" + (index + 1))),
+                                CategoryId = CategoryNode.UnclassifiedId,
+                                ExportSelected = true,
+                                GeometryKey = BuildGeometryKey(body),
+                                SourceSha256 = source.ContentSha256,
+                                Configuration = source.Configuration,
+                                PersistReference = ExportIntegrity.PersistentReference(model, body),
+                                Status = "已读取"
+                            };
+                            ExportIntegrity.Capture(body, item);
+                            if (request.GeneratePreviews)
                             {
-                                if (previewError is SolidWorksInterferenceException) throw;
-                                item.Status = "预览失败";
-                                item.Message = previewError.Message;
+                                try
+                                {
+                                    string suffix = item.GeometryKey.Substring(0, Math.Min(12, item.GeometryKey.Length));
+                                    string bodyCache = Path.Combine(sourceCache, string.Format("{0:D4}_{1}", index + 1, suffix));
+                                    Directory.CreateDirectory(bodyCache);
+                                    GeneratePreviews(app, model, body, response.TemplatePath, bodyCache, item);
+                                }
+                                catch (Exception previewError)
+                                {
+                                    if (previewError is SolidWorksInterferenceException || previewError is OperationCanceledException) throw;
+                                    item.Status = "预览失败";
+                                    item.Message = previewError.Message;
+                                }
                             }
+                            source.Bodies.Add(item);
                         }
-                        source.Bodies.Add(item);
-                        Release(body);
+                        finally { Release(body); }
                     }
+                    ExportIntegrity.VerifySourceFile(source.Path, source.ContentSha256);
                     source.Status = "读取完成";
-                    source.Message = openWarnings == 0 ? string.Empty : "SolidWorks 打开警告：" + openWarnings;
+                    source.Message = (openWarnings == 0 ? string.Empty : "SolidWorks 打开警告：" + openWarnings) +
+                        (hasUnsavedState ? (openWarnings == 0 ? string.Empty : "；") + "检测到未保存或自动重建状态：可以继续查看和分类，正式导出前请保存源文件并重新读取。" : string.Empty);
                 }
                 catch (Exception fileError)
                 {
-                    if (fileError is SolidWorksInterferenceException) throw;
+                    if (fileError is SolidWorksInterferenceException || fileError is OperationCanceledException) throw;
                     source.Status = "读取失败";
                     source.Message = fileError.Message;
                 }
@@ -531,7 +627,7 @@ namespace SWBodyOrganizer
             File.Delete(bmpPath);
         }
 
-        private static string BuildGeometryKey(IBody2 body)
+        internal static string BuildGeometryKey(IBody2 body)
         {
             List<string> faceTokens = new List<string>();
             object[] faces = body.GetFaces() as object[];
@@ -566,7 +662,7 @@ namespace SWBodyOrganizer
             {
                 if (items.Count() < 2) continue;
                 group++;
-                string label = "重复组 " + group.ToString("D2");
+                string label = "疑似重复 " + group.ToString("D2");
                 foreach (BodyRecord item in items) item.DuplicateGroup = label;
             }
         }
@@ -580,12 +676,17 @@ namespace SWBodyOrganizer
             request.StagingRoot = Path.GetFullPath(request.StagingRoot);
             if (!request.ExportSettings.ExportSldprt && !request.ExportSettings.ExportStep) throw new InvalidOperationException("至少需要选择一种导出格式。");
             if (request.ExportSettings.ExportStep && !request.ExportSettings.ExportSldprt) throw new InvalidOperationException("装配体批量 STEP 导出需要同时导出 SLDPRT 零件。");
+            if (request.ExportSettings.StepOnly && (!request.ExportSettings.ExportStep || request.ExportSettings.CreateAssembly))
+                throw new InvalidDataException("仅 STEP 模式不保留原生装配体。 / STEP-only mode cannot retain a native assembly.");
             if (request.ExportSettings.CreateAssembly && !request.ExportSettings.ExportSldprt) throw new InvalidOperationException("生成装配体时必须同时导出 SLDPRT 零件。");
             bool needAssembly = request.ExportSettings.CreateAssembly || request.ExportSettings.ExportStep;
             if (needAssembly && string.IsNullOrWhiteSpace(response.AssemblyTemplatePath)) throw new InvalidOperationException("没有找到可用的 SolidWorks 装配体模板。");
             if (string.IsNullOrWhiteSpace(response.TemplatePath)) throw new InvalidOperationException("没有找到可用的 SolidWorks 零件模板。");
             Directory.CreateDirectory(request.StagingRoot);
-            List<ExportResultItem> results = new List<ExportResultItem>();
+            List<ExportResultItem> results = response.ExportResults;
+            if (results.Count == 0) results.AddRange(request.ExportItems.Select(plan => CreateResult(plan, request.ExportSettings)));
+            PlanOutputPaths(request, results);
+            Checkpoint(request, response);
             int completed = 0;
 
             foreach (IGrouping<string, ExportPlanItem> sourceGroup in request.ExportItems.GroupBy(item => item.SourcePath, StringComparer.OrdinalIgnoreCase))
@@ -599,12 +700,19 @@ namespace SWBodyOrganizer
                 bool sourceWasAlreadyOpen = false;
                 try
                 {
+                    string sourceHash = groupPlans[0].SourceSha256;
+                    string configuration = groupPlans[0].Configuration;
+                    if (groupPlans.Any(plan => plan.SourceSha256 != sourceHash || plan.Configuration != configuration))
+                        throw new InvalidDataException("同一源文件的任务身份或配置不一致。 / Inconsistent source identity or configuration in task.");
+                    ExportIntegrity.VerifySourceFile(sourceGroup.Key, sourceHash);
                     int openErrors = 0, openWarnings = 0;
                     int openOptions = (int)swOpenDocOptions_e.swOpenDocOptions_Silent | (int)swOpenDocOptions_e.swOpenDocOptions_ReadOnly;
                     sourceModel = app.GetOpenDocumentByName(sourceGroup.Key) as IModelDoc2;
                     sourceWasAlreadyOpen = sourceModel != null;
-                    if (sourceModel == null) sourceModel = app.OpenDoc6(sourceGroup.Key, (int)swDocumentTypes_e.swDocPART, openOptions, string.Empty, ref openErrors, ref openWarnings);
+                    if (sourceModel == null) sourceModel = app.OpenDoc6(sourceGroup.Key, (int)swDocumentTypes_e.swDocPART, openOptions, configuration, ref openErrors, ref openWarnings);
                     if (sourceModel == null) throw new InvalidOperationException("无法重新打开源文件：" + sourceGroup.Key);
+                    VerifyOpenedSource(sourceModel, configuration, sourceWasAlreadyOpen);
+                    ExportIntegrity.VerifySourceFile(sourceGroup.Key, sourceHash);
                     sourceTitle = sourceModel.GetTitle();
                     sourcePart = (IPartDoc)sourceModel;
                     bodies = sourcePart.GetBodies2((int)swBodyType_e.swSolidBody, false) as object[] ?? new object[0];
@@ -614,23 +722,24 @@ namespace SWBodyOrganizer
                         CheckCancellation(request.CancelFile);
                         completed++;
                         Emit("PROGRESS", Percent(completed, request.ExportItems.Count, 0), "导出零件", string.Format("{0}/{1}：{2}", completed, request.ExportItems.Count, plan.ExportName));
-                        ExportResultItem result = CreateResult(plan);
-                        results.Add(result);
-                        if (plan.BodyIndex < 0 || plan.BodyIndex >= bodies.Length)
+                        ExportResultItem result = results.Single(item => item.BodyId == plan.BodyId);
+                        try
                         {
-                            result.Message = "源实体序号已经变化，请重新扫描。";
-                            result.SldprtStatus = request.ExportSettings.ExportSldprt ? "失败" : "未启用";
-                            result.StepStatus = request.ExportSettings.ExportStep ? "失败" : "未启用";
-                            continue;
+                            ExportIntegrity.VerifySourceFile(sourceGroup.Key, sourceHash);
+                            IBody2 selectedBody = ExportIntegrity.ResolveBody(app, sourceModel, bodies, plan);
+                            VerifyDuplicateMembers(app, sourceModel, bodies, selectedBody, plan, request.CancelFile);
+                            ExportOne(app, sourceModel, selectedBody, response.TemplatePath, request, plan, result);
+                            try { ExportIntegrity.VerifyMemory(sourceModel, configuration); }
+                            catch (Exception changed) { throw new SolidWorksInterferenceException(changed.Message); }
                         }
-                        try { ExportOne(app, (IBody2)bodies[plan.BodyIndex], response.TemplatePath, request, plan, result); }
                         catch (Exception itemError)
                         {
-                            if (itemError is SolidWorksInterferenceException) throw;
+                            if (itemError is SolidWorksInterferenceException || itemError is OperationCanceledException) throw;
                             result.Message = itemError.Message;
-                            if (request.ExportSettings.ExportSldprt && result.SldprtStatus == "未启用") result.SldprtStatus = "失败";
-                            if (request.ExportSettings.ExportStep && result.StepStatus == "未启用") result.StepStatus = "失败";
+                            if (request.ExportSettings.ExportSldprt && !IsSuccessful(result.SldprtStatus)) result.SldprtStatus = "失败";
+                            if (request.ExportSettings.ExportStep && !IsSuccessful(result.StepStatus) && !result.StepStatus.StartsWith("跳过")) result.StepStatus = "失败";
                         }
+                        finally { UpdateOutcome(result); Checkpoint(request, response); }
                     }
                     if (needAssembly)
                     {
@@ -651,15 +760,15 @@ namespace SWBodyOrganizer
                 }
                 catch (Exception sourceError)
                 {
-                    if (sourceError is SolidWorksInterferenceException) throw;
+                    if (sourceError is SolidWorksInterferenceException || sourceError is OperationCanceledException) throw;
                     foreach (ExportPlanItem plan in groupPlans)
                     {
-                        if (results.Any(item => item.BodyId == plan.BodyId)) continue;
-                        ExportResultItem result = CreateResult(plan);
+                        ExportResultItem result = results.Single(item => item.BodyId == plan.BodyId);
+                        if (result.SldprtStatus != "未执行") continue;
                         result.Message = sourceError.Message;
                         result.SldprtStatus = request.ExportSettings.ExportSldprt ? "失败" : "未启用";
                         result.StepStatus = request.ExportSettings.ExportStep ? "失败" : "未启用";
-                        results.Add(result);
+                        UpdateOutcome(result);
                     }
                     if (needAssembly && !response.AssemblyResults.Any(item => string.Equals(item.SourcePath, sourceGroup.Key, StringComparison.OrdinalIgnoreCase)))
                     {
@@ -678,6 +787,7 @@ namespace SWBodyOrganizer
                     Release(sourcePart);
                     if (sourceModel != null && !sourceWasAlreadyOpen) { try { app.CloseDoc(string.IsNullOrWhiteSpace(sourceTitle) ? sourceModel.GetTitle() : sourceTitle); } catch { } }
                     Release(sourceModel);
+                    Checkpoint(request, response);
                 }
             }
 
@@ -702,12 +812,71 @@ namespace SWBodyOrganizer
             Emit("PROGRESS", request.ExportSettings.ExportStep ? 72 : 100, request.ExportSettings.ExportStep ? "准备 STEP" : "完成", response.Message);
         }
 
-        internal static bool IsSuccessful(string status)
+        private static void VerifyDuplicateMembers(ISldWorks app, IModelDoc2 sourceModel, object[] sourceBodies, IBody2 representative, ExportPlanItem plan, string cancelFile)
         {
-            return status == "成功" || status.StartsWith("跳过", StringComparison.Ordinal);
+            List<BodyRecord> members = plan.DuplicateMembers ?? new List<BodyRecord>();
+            if (plan.Quantity != members.Count + 1)
+                throw new InvalidDataException("重复组缺少成员身份，请重新建立导出任务。 / Duplicate member identities are missing; create a new export task.");
+            foreach (IGrouping<string, BodyRecord> group in members.GroupBy(body => body.SourcePath, StringComparer.OrdinalIgnoreCase))
+            {
+                bool sameSource = string.Equals(group.Key, plan.SourcePath, StringComparison.OrdinalIgnoreCase);
+                IModelDoc2 model = sameSource ? sourceModel : null;
+                object[] bodies = sameSource ? sourceBodies : null;
+                bool alreadyOpen = true;
+                try
+                {
+                    CheckCancellation(cancelFile);
+                    BodyRecord first = group.First();
+                    if (group.Any(body => body.SourceSha256 != first.SourceSha256 || body.Configuration != first.Configuration))
+                        throw new InvalidDataException("重复组的源文件身份或配置不一致。 / Duplicate source identity or configuration is inconsistent.");
+                    ExportIntegrity.VerifySourceFile(group.Key, first.SourceSha256);
+                    if (!sameSource)
+                    {
+                        model = app.GetOpenDocumentByName(group.Key) as IModelDoc2;
+                        alreadyOpen = model != null;
+                        int errors = 0, warnings = 0;
+                        if (model == null) model = app.OpenDoc6(group.Key, (int)swDocumentTypes_e.swDocPART,
+                            (int)swOpenDocOptions_e.swOpenDocOptions_Silent | (int)swOpenDocOptions_e.swOpenDocOptions_ReadOnly, first.Configuration, ref errors, ref warnings);
+                        if (model == null) throw new InvalidDataException("无法打开重复成员源文件： / Cannot open duplicate source: " + group.Key);
+                        VerifyOpenedSource(model, first.Configuration, alreadyOpen);
+                        bodies = ((IPartDoc)model).GetBodies2((int)swBodyType_e.swSolidBody, false) as object[] ?? new object[0];
+                    }
+                    foreach (BodyRecord member in group)
+                    {
+                        CheckCancellation(cancelFile);
+                        IBody2 actual = ExportIntegrity.ResolveBody(app, model, bodies, ExportIntegrity.BodyIdentity(member));
+                        try { ExportIntegrity.VerifySameShape(representative, actual); }
+                        catch (InvalidDataException ex) { throw new InvalidDataException(member.SourceName + " / " + member.OriginalName + ": " + ex.Message, ex); }
+                    }
+                    ExportIntegrity.VerifyMemory(model, first.Configuration);
+                    ExportIntegrity.VerifySourceFile(group.Key, first.SourceSha256);
+                }
+                finally
+                {
+                    if (!sameSource)
+                    {
+                        if (bodies != null) foreach (object body in bodies) Release(body);
+                        if (model != null && !alreadyOpen) { try { app.CloseDoc(model.GetTitle()); } catch { } }
+                        Release(model);
+                    }
+                }
+            }
+            ExportIntegrity.VerifyMemory(sourceModel, plan.Configuration);
         }
 
-        private static ExportResultItem CreateResult(ExportPlanItem plan)
+        internal static bool IsSuccessful(string status)
+        {
+            return status == "成功" || status == "沿用（已验证）";
+        }
+
+        private static void VerifyOpenedSource(IModelDoc2 model, string configuration, bool alreadyOpen)
+        {
+            if (!alreadyOpen && model.GetSaveFlag())
+                throw new InvalidDataException("文件打开后被 SolidWorks 标记为需要保存，可能发生了自动重建或版本转换。为避免使用与磁盘不一致的几何，请先在 SolidWorks 中确认保存，或使用独立副本；程序不会保存源文件。 / SolidWorks marked this newly opened file as needing a save, possibly after automatic rebuild or version conversion. Confirm and save it in SolidWorks, or use a separate copy, before scanning. Master Miao does not save the source.");
+            ExportIntegrity.VerifyMemory(model, configuration);
+        }
+
+        private static ExportResultItem CreateResult(ExportPlanItem plan, ExportSettings settings)
         {
             return new ExportResultItem
             {
@@ -716,15 +885,25 @@ namespace SWBodyOrganizer
                 SourceName = plan.SourceName,
                 OriginalName = plan.OriginalName,
                 ExportName = plan.ExportName,
+                PlannedExportName = plan.ExportName,
                 CategoryPath = plan.CategoryPath,
                 PreviewFront = plan.PreviewFront,
                 PreviewTop = plan.PreviewTop,
                 PreviewIso = plan.PreviewIso,
-                Quantity = plan.Quantity
+                Quantity = plan.Quantity,
+                Occurrences = new List<string>(plan.Occurrences ?? new List<string>()),
+                SldprtStatus = settings.ExportSldprt ? "未执行" : "未启用",
+                StepStatus = settings.ExportStep ? "未执行" : "未启用",
+                AssemblyStatus = settings.CreateAssembly ? "未执行" : "未启用",
+                Outcome = "未执行",
+                ExpectedVolume = plan.Volume,
+                ExpectedArea = plan.SurfaceArea,
+                ExpectedBounds = plan.GeometryBounds,
+                ExpectedGeometryEvidenceKey = plan.GeometryEvidenceKey
             };
         }
 
-        private static void ExportOne(ISldWorks app, IBody2 body, string template, WorkerRequest request, ExportPlanItem plan, ExportResultItem result)
+        private static void ExportOne(ISldWorks app, IModelDoc2 sourceModel, IBody2 body, string template, WorkerRequest request, ExportPlanItem plan, ExportResultItem result)
         {
             IBody2 copy = null;
             IModelDoc2 target = null;
@@ -732,33 +911,32 @@ namespace SWBodyOrganizer
             IModelDocExtension extension = null;
             object feature = null;
             string targetTitle = string.Empty;
-            string safeName = NameRules.SafeStem(plan.ExportName, "零件");
-            string relativeFolder = SafeRelativeFolder(plan.CategoryPath);
-            string partRoot = GetPartOutputRoot(request);
-            string stepRoot = GetStepOutputRoot(request);
-            string outputFolder = string.IsNullOrWhiteSpace(relativeFolder) ? partRoot : Path.Combine(partRoot, relativeFolder);
-            string stepFolder = string.IsNullOrWhiteSpace(relativeFolder) ? stepRoot : Path.Combine(stepRoot, relativeFolder);
+            string finalSldprt = result.SldprtPath;
+            string finalStep = result.StepPath;
+            string outputFolder = Path.GetDirectoryName(finalSldprt);
+            string stepFolder = request.ExportSettings.ExportStep ? Path.GetDirectoryName(finalStep) : string.Empty;
             Directory.CreateDirectory(outputFolder);
             if (request.ExportSettings.ExportStep) Directory.CreateDirectory(stepFolder);
-            string resolvedStem = ResolveOutputStem(outputFolder, stepFolder, safeName, request.ExportSettings);
-            string finalBase = Path.Combine(outputFolder, resolvedStem);
-            string finalSldprt = finalBase + ".SLDPRT";
-            string finalStep = Path.Combine(stepFolder, resolvedStem + ".STEP");
             bool existingSldprt = File.Exists(finalSldprt);
             bool existingStep = File.Exists(finalStep);
             if (request.ExportSettings.ExportSldprt)
             {
                 result.SldprtPath = finalSldprt;
-                if (existingSldprt && request.ExportSettings.ConflictPolicy == "跳过") result.SldprtStatus = "跳过（已存在）";
+                if (existingSldprt && request.ExportSettings.ConflictPolicy == "跳过") result.SldprtStatus = "跳过（未验证）";
             }
             if (request.ExportSettings.ExportStep)
             {
                 result.StepPath = finalStep;
-                result.StepStatus = existingStep && request.ExportSettings.ConflictPolicy == "跳过" ? "跳过（已存在）" : "待批量导出";
+                result.StepStatus = existingStep && request.ExportSettings.ConflictPolicy == "跳过" ? "跳过（未验证）" : "待批量导出";
             }
             if (existingSldprt && request.ExportSettings.ConflictPolicy == "跳过")
             {
-                result.VerificationStatus = "未重新验证";
+                result.VerificationStatus = result.SldprtVerification = "跳过未验证";
+                if (request.ExportSettings.ExportStep && !existingStep)
+                {
+                    result.StepStatus = "失败";
+                    result.Message = "已有零件未验证，不作为新 STEP 或装配体的输入；请使用自动编号或覆盖重新生成。 / Unverified existing part cannot be input to a new STEP or assembly; regenerate.";
+                }
                 return;
             }
 
@@ -798,21 +976,18 @@ namespace SWBodyOrganizer
                     Release(copy);
                 }
 
-                VerifySingleBody(app, stageSldprt);
-                result.VerificationStatus = "单实体验证通过";
-
-                if (request.ExportSettings.ConflictPolicy == "覆盖")
-                {
-                    BackupExisting(finalBase, new ExportSettings
-                    {
-                        ExportSldprt = request.ExportSettings.ExportSldprt,
-                        ExportStep = false
-                    });
-                }
+                CheckCancellation(request.CancelFile);
+                VerifySingleBody(app, stageSldprt, body);
+                result.VerificationStatus = result.SldprtVerification = "几何验证通过";
+                ExportIntegrity.VerifySourceFile(plan.SourcePath, plan.SourceSha256);
+                ExportIntegrity.VerifyMemory(sourceModel, plan.Configuration);
+                if (!ExportIntegrity.EvidenceMatches(body, plan))
+                    throw new SolidWorksInterferenceException("提交前源实体发生变化，本次文件未提交。 / Source body changed before commit; artifact not committed.");
+                CheckCancellation(request.CancelFile);
                 if (request.ExportSettings.ExportSldprt)
                 {
                     result.SldprtPath = finalSldprt;
-                    File.Copy(stageSldprt, result.SldprtPath, false);
+                    ExportIntegrity.CommitFile(stageSldprt, result.SldprtPath, request.ExportSettings.ConflictPolicy == "覆盖", InputPaths(request));
                     result.SldprtStatus = "成功";
                 }
             }
@@ -832,8 +1007,9 @@ namespace SWBodyOrganizer
                 StepStatus = neededForStep ? "待批量导出" : "未启用",
                 Temporary = !keepAssembly
             };
-            string finalPath = keepAssembly ? ResolveAssemblyPath(GetPartOutputRoot(request), sourcePath, request.ExportSettings.ConflictPolicy) : string.Empty;
+            string finalPath = keepAssembly ? sourceResults[0].AssemblyPath : string.Empty;
             result.AssemblyPath = finalPath;
+            result.AssemblyStepPath = sourceResults[0].AssemblyStepPath;
             List<string> componentPaths = sourceResults
                 .Where(item => IsSuccessful(item.SldprtStatus) && !string.IsNullOrWhiteSpace(item.SldprtPath) && File.Exists(item.SldprtPath))
                 .Select(item => item.SldprtPath).ToList();
@@ -846,7 +1022,7 @@ namespace SWBodyOrganizer
             }
             if (keepAssembly && !neededForStep && File.Exists(finalPath) && request.ExportSettings.ConflictPolicy == "跳过")
             {
-                result.Status = "跳过（已存在）";
+                result.Status = "跳过（未验证）";
                 result.Message = "目标装配体已存在。";
                 return result;
             }
@@ -902,13 +1078,13 @@ namespace SWBodyOrganizer
                 {
                     if (File.Exists(finalPath) && request.ExportSettings.ConflictPolicy == "跳过")
                     {
-                        result.Status = "跳过（已存在）";
+                        result.Status = "跳过（未验证）";
                         result.Message = "目标装配体已存在；STEP 将使用本次生成的临时装配体。";
                     }
                     else
                     {
-                        if (request.ExportSettings.ConflictPolicy == "覆盖" && File.Exists(finalPath)) BackupExistingAssembly(finalPath);
-                        File.Copy(stagePath, finalPath, false);
+                        CheckCancellation(request.CancelFile);
+                        ExportIntegrity.CommitFile(stagePath, finalPath, request.ExportSettings.ConflictPolicy == "覆盖", InputPaths(request));
                         result.Status = "成功";
                         result.Message = "已按原零件坐标插入并固定全部组件。";
                     }
@@ -928,6 +1104,7 @@ namespace SWBodyOrganizer
             }
             catch (Exception ex)
             {
+                if (ex is OperationCanceledException || ex is SolidWorksInterferenceException) throw;
                 result.Message = ex.Message;
                 result.StepStatus = neededForStep ? "失败" : result.StepStatus;
                 return result;
@@ -972,6 +1149,13 @@ namespace SWBodyOrganizer
                     string componentPath = component.GetPathName();
                     if (!string.IsNullOrWhiteSpace(componentPath)) actual.Add(Path.GetFullPath(componentPath));
                     if (component.IsFixed()) fixedCount++;
+                    IMathTransform transform = component.Transform2;
+                    try
+                    {
+                        if (transform == null || !ExportIntegrity.IdentityTransform(transform.ArrayData as double[]))
+                            throw new InvalidDataException("原位装配体组件的位置或方向不一致。 / In-place component transform is not identity.");
+                    }
+                    finally { Release(transform); }
                 }
                 if (!expected.SetEquals(actual))
                     throw new InvalidOperationException("装配体验证失败：组件引用与本次导出的零件文件不一致。");
@@ -987,31 +1171,12 @@ namespace SWBodyOrganizer
             }
         }
 
-        private static string ResolveAssemblyPath(string outputRoot, string sourcePath, string conflictPolicy)
-        {
-            string stem = NameRules.SafeStem(Path.GetFileNameWithoutExtension(sourcePath), "多实体零件") + "_拆分装配体";
-            string candidate = Path.Combine(outputRoot, stem + ".SLDASM");
-            if (conflictPolicy != "自动编号" || !File.Exists(candidate)) return candidate;
-            for (int index = 2; index < 10000; index++)
-            {
-                candidate = Path.Combine(outputRoot, stem + "_" + index + ".SLDASM");
-                if (!File.Exists(candidate)) return candidate;
-            }
-            throw new IOException("无法为重复装配体生成可用名称。");
-        }
-
-        private static void BackupExistingAssembly(string path)
-        {
-            string backup = Path.Combine(AppPaths.Backups, DateTime.Now.ToString("yyyyMMdd_HHmmss_fff"));
-            Directory.CreateDirectory(backup);
-            File.Move(path, Path.Combine(backup, Path.GetFileName(path)));
-        }
-
-        private static void VerifySingleBody(ISldWorks app, string path)
+        private static void VerifySingleBody(ISldWorks app, string path, IBody2 expected)
         {
             IModelDoc2 model = null;
             IPartDoc part = null;
             string title = string.Empty;
+            object[] bodies = null;
             try
             {
                 int errors = 0, warnings = 0;
@@ -1023,12 +1188,13 @@ namespace SWBodyOrganizer
                 app.ActivateDoc3(title, false, 0, ref activateErrors);
                 EnsureActiveDocument(app, title, "验证拆分零件");
                 part = (IPartDoc)model;
-                object[] bodies = part.GetBodies2((int)swBodyType_e.swSolidBody, false) as object[];
+                bodies = part.GetBodies2((int)swBodyType_e.swSolidBody, false) as object[];
                 if (bodies == null || bodies.Length != 1) throw new InvalidOperationException("导出文件没有通过单实体验证。");
-                foreach (object body in bodies) Release(body);
+                ExportIntegrity.VerifyGeometry(expected, (IBody2)bodies[0]);
             }
             finally
             {
+                if (bodies != null) foreach (object body in bodies) Release(body);
                 Release(part);
                 if (model != null) { try { app.CloseDoc(string.IsNullOrWhiteSpace(title) ? model.GetTitle() : title); } catch { } }
                 Release(model);
@@ -1042,8 +1208,125 @@ namespace SWBodyOrganizer
             return Path.Combine(parts.Select((part, index) => NameRules.SafeStem(part, "分类" + (index + 1))).ToArray());
         }
 
+        internal static IEnumerable<string> InputPaths(WorkerRequest request)
+        {
+            return (request.Sources ?? new List<SourceRecord>()).Select(item => item.Path)
+                .Concat((request.ExportItems ?? new List<ExportPlanItem>()).Select(item => item.SourcePath))
+                .Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase);
+        }
+
+        internal static void PlanOutputPaths(WorkerRequest request, List<ExportResultItem> results)
+        {
+            HashSet<string> reservedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> reservedStems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            bool globallyUnique = request.ExportSettings.ExportStep || request.ExportSettings.CreateAssembly;
+            bool numbered = request.ExportSettings.ConflictPolicy == "自动编号";
+            foreach (ExportResultItem result in results)
+            {
+                string relative = SafeRelativeFolder(result.CategoryPath);
+                string partFolder = Path.Combine(GetPartOutputRoot(request), relative);
+                string stepFolder = Path.Combine(GetStepOutputRoot(request), relative);
+                string stem = NameRules.SafeStem(result.PlannedExportName, "零件");
+                string candidate = stem;
+                for (int suffix = 1; ; suffix++)
+                {
+                    candidate = suffix == 1 ? stem : stem + "_" + suffix;
+                    string partPath = Path.GetFullPath(Path.Combine(partFolder, candidate + ".SLDPRT"));
+                    string stepPath = Path.GetFullPath(Path.Combine(stepFolder, candidate + ".STEP"));
+                    bool taskCollision = reservedPaths.Contains(partPath) || (request.ExportSettings.ExportStep && reservedPaths.Contains(stepPath)) || (globallyUnique && reservedStems.Contains(candidate));
+                    bool diskCollision = ExistsForSelectedFormats(partFolder, stepFolder, candidate, request.ExportSettings);
+                    if (taskCollision && !numbered) throw new InvalidDataException("任务中的最终文件名冲突，请调整名称或使用自动编号： / Final task filename collision: " + candidate);
+                    if (taskCollision || (numbered && diskCollision))
+                    {
+                        if (suffix >= 9999) throw new IOException("无法规划唯一输出名称。 / Unable to allocate unique output name.");
+                        continue;
+                    }
+                    ExportIntegrity.EnsureNotSource(partPath, InputPaths(request));
+                    ExportIntegrity.EnsureNotSource(stepPath, InputPaths(request));
+                    result.ExportName = candidate;
+                    result.SldprtPath = partPath;
+                    result.StepPath = request.ExportSettings.ExportStep ? stepPath : string.Empty;
+                    reservedPaths.Add(partPath);
+                    if (request.ExportSettings.ExportStep) reservedPaths.Add(stepPath);
+                    reservedStems.Add(candidate);
+                    break;
+                }
+            }
+            if (!globallyUnique) return;
+            foreach (IGrouping<string, ExportResultItem> group in results.GroupBy(item => item.SourcePath, StringComparer.OrdinalIgnoreCase))
+            {
+                string stem = NameRules.SafeStem(Path.GetFileNameWithoutExtension(group.Key), "多实体零件") + "_拆分装配体";
+                for (int suffix = 1; ; suffix++)
+                {
+                    string candidate = suffix == 1 ? stem : stem + "_" + suffix;
+                    string assembly = Path.GetFullPath(Path.Combine(GetPartOutputRoot(request), candidate + ".SLDASM"));
+                    string step = Path.GetFullPath(Path.Combine(GetStepOutputRoot(request), candidate + ".STEP"));
+                    bool taskCollision = reservedStems.Contains(candidate) || reservedPaths.Contains(assembly) || reservedPaths.Contains(step);
+                    bool diskCollision = (request.ExportSettings.CreateAssembly && File.Exists(assembly)) || (request.ExportSettings.ExportStep && File.Exists(step));
+                    if (taskCollision && !numbered) throw new InvalidDataException("装配体名称冲突： / Assembly name collision: " + candidate);
+                    if (taskCollision || (numbered && diskCollision))
+                    {
+                        if (suffix >= 9999) throw new IOException("无法规划唯一装配体名称。 / Unable to allocate assembly name.");
+                        continue;
+                    }
+                    ExportIntegrity.EnsureNotSource(assembly, InputPaths(request));
+                    ExportIntegrity.EnsureNotSource(step, InputPaths(request));
+                    foreach (ExportResultItem item in group)
+                    {
+                        item.AssemblyPath = request.ExportSettings.CreateAssembly ? assembly : string.Empty;
+                        item.AssemblyStepPath = request.ExportSettings.ExportStep ? step : string.Empty;
+                    }
+                    reservedPaths.Add(assembly); reservedPaths.Add(step); reservedStems.Add(candidate);
+                    break;
+                }
+            }
+        }
+
+        internal static void UpdateOutcome(ExportResultItem item)
+        {
+            string[] statuses = { item.SldprtStatus, item.StepStatus, item.AssemblyStatus, item.AssemblyStepStatus };
+            item.Outcome = statuses.Any(s => s == "失败") ? "失败" :
+                statuses.Any(s => s == "取消") ? "取消" :
+                statuses.Any(s => s != null && s.StartsWith("跳过", StringComparison.Ordinal)) ? "跳过未验证" :
+                statuses.Any(s => s == "未执行" || s == "待批量导出" || s == "已生成") ? "未执行" :
+                statuses.Any(s => s == "成功") ? "本次成功" : "未执行";
+        }
+
+        internal static void Checkpoint(WorkerRequest request, WorkerResponse response)
+        {
+            if (string.IsNullOrWhiteSpace(request.CheckpointPath)) return;
+            foreach (ExportResultItem item in response.ExportResults) UpdateOutcome(item);
+            JsonFile.Save(request.CheckpointPath, response);
+        }
+
+        private static void CompletePending(WorkerRequest request, WorkerResponse response)
+        {
+            foreach (ExportResultItem item in response.ExportResults)
+            {
+                if (response.Cancelled)
+                {
+                    if (item.SldprtStatus == "已生成") item.SldprtStatus = "取消";
+                    if (item.StepStatus == "待批量导出") item.StepStatus = "取消";
+                    if (item.AssemblyStatus == "未执行" && item.SldprtStatus == "成功") item.AssemblyStatus = "取消";
+                }
+                else if (!response.Success)
+                {
+                    if (item.SldprtStatus == "已生成") item.SldprtStatus = "失败";
+                    if (item.StepStatus == "待批量导出") item.StepStatus = "失败";
+                }
+                if ((item.SldprtStatus == "失败" || item.StepStatus == "失败" || item.SldprtStatus == "取消" || item.StepStatus == "取消") && string.IsNullOrWhiteSpace(item.Message)) item.Message = response.Message;
+                UpdateOutcome(item);
+            }
+        }
+
         internal static string GetPartOutputRoot(WorkerRequest request)
         {
+            if (request.ExportSettings != null && request.ExportSettings.StepOnly)
+            {
+                if (string.IsNullOrWhiteSpace(request.StagingRoot) || !Path.IsPathRooted(request.StagingRoot))
+                    throw new InvalidDataException("仅 STEP 模式需要独立的任务暂存目录。 / STEP-only mode requires an absolute task staging directory.");
+                return Path.Combine(request.StagingRoot, "step-only-parts");
+            }
             return request.ExportSettings != null && request.ExportSettings.SeparateStepOutput
                 ? Path.Combine(request.OutputRoot, "零件源文件")
                 : request.OutputRoot;
@@ -1051,20 +1334,10 @@ namespace SWBodyOrganizer
 
         internal static string GetStepOutputRoot(WorkerRequest request)
         {
+            if (request.ExportSettings != null && request.ExportSettings.StepOnly) return request.OutputRoot;
             return request.ExportSettings != null && request.ExportSettings.SeparateStepOutput
                 ? Path.Combine(request.OutputRoot, "STEP生产文件")
                 : request.OutputRoot;
-        }
-
-        private static string ResolveOutputStem(string partFolder, string stepFolder, string stem, ExportSettings settings)
-        {
-            if (settings.ConflictPolicy != "自动编号" || !ExistsForSelectedFormats(partFolder, stepFolder, stem, settings)) return stem;
-            for (int index = 2; index < 10000; index++)
-            {
-                string candidate = stem + "_" + index;
-                if (!ExistsForSelectedFormats(partFolder, stepFolder, candidate, settings)) return candidate;
-            }
-            throw new IOException("无法为重复文件生成可用名称。");
         }
 
         private static bool ExistsForSelectedFormats(string partFolder, string stepFolder, string stem, ExportSettings settings)
@@ -1073,18 +1346,33 @@ namespace SWBodyOrganizer
                 || (settings.ExportStep && File.Exists(Path.Combine(stepFolder, stem + ".STEP")));
         }
 
-        private static void BackupExisting(string basePath, ExportSettings settings)
+        internal static void FinishStepOnly(WorkerRequest request, WorkerResponse response, bool cleanup)
         {
-            string backup = Path.Combine(AppPaths.Backups, DateTime.Now.ToString("yyyyMMdd_HHmmss_fff"));
-            if (settings.ExportSldprt && File.Exists(basePath + ".SLDPRT"))
+            if (request.ExportSettings == null || !request.ExportSettings.StepOnly) return;
+            string temporaryRoot;
+            try { temporaryRoot = Path.GetFullPath(GetPartOutputRoot(request)).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar; }
+            catch { temporaryRoot = string.Empty; }
+            foreach (ExportResultItem item in response.ExportResults)
             {
-                Directory.CreateDirectory(backup);
-                File.Move(basePath + ".SLDPRT", Path.Combine(backup, Path.GetFileName(basePath) + ".SLDPRT"));
-            }
-            if (settings.ExportStep && File.Exists(basePath + ".STEP"))
-            {
-                Directory.CreateDirectory(backup);
-                File.Move(basePath + ".STEP", Path.Combine(backup, Path.GetFileName(basePath) + ".STEP"));
+                string path = item.SldprtPath;
+                if (cleanup && !string.IsNullOrWhiteSpace(path) && temporaryRoot.Length > 0)
+                {
+                    try
+                    {
+                        string absolute = Path.GetFullPath(path);
+                        if (absolute.StartsWith(temporaryRoot, StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(Path.GetExtension(absolute), ".SLDPRT", StringComparison.OrdinalIgnoreCase))
+                        {
+                            ExportIntegrity.EnsureNotSource(absolute, InputPaths(request));
+                            if (File.Exists(absolute)) File.Delete(absolute);
+                        }
+                    }
+                    catch (Exception ex) { item.Message += "\n中间文件暂未清理 / Intermediate file retained: " + ex.Message; }
+                }
+                if (item.SldprtStatus == "失败" && !IsSuccessful(item.StepStatus)) item.StepStatus = "失败";
+                // A task prerequisite is not a delivered file and must not inflate reports.
+                item.SldprtPath = string.Empty; item.SldprtStatus = "未启用"; item.SldprtVerification = string.Empty;
+                UpdateOutcome(item);
             }
         }
 

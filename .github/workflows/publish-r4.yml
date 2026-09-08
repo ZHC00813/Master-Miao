@@ -1,0 +1,67 @@
+name: Publish verified R4 prerelease
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/publish-r4.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: publish-r4
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_REPO: ${{ github.repository }}
+      RELEASE_COMMIT: ${{ github.sha }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Fetch exact source and hash-pinned existing dependencies
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          Invoke-WebRequest "https://api.github.com/repos/$env:RELEASE_REPO/zipball/$env:RELEASE_COMMIT" -Headers $headers -OutFile source.zip
+          Expand-Archive source.zip unpacked
+          $source = (Get-ChildItem unpacked -Directory | Select-Object -First 1).FullName
+          "RELEASE_SOURCE=$source" | Out-File $env:GITHUB_ENV -Append
+          Invoke-WebRequest 'https://github.com/ZHC00813/Master-Miao/releases/download/v1.2.5/Master-Miao-v1.2.5.zip' -OutFile dependencies.zip
+          if ((Get-FileHash dependencies.zip).Hash -ne '9C6456774CF1ABDBEE8E9AE6465C94D040AFD5432095760F0424C73FF67AE03E') { throw 'Dependency archive hash mismatch' }
+          Expand-Archive dependencies.zip dependencies
+          $api = (Get-ChildItem dependencies -Recurse -Filter SolidWorks.Interop.sldworks.dll | Select-Object -First 1).DirectoryName
+          if ((Get-FileHash (Join-Path $api 'SolidWorks.Interop.sldworks.dll')).Hash -ne '750D44D735DA1B4E165BF7766FE5D2500D5D5FAA6BCCF2B088FF35356B9F2F5C') { throw 'Interop hash mismatch' }
+          if ((Get-FileHash (Join-Path $api 'SolidWorks.Interop.swconst.dll')).Hash -ne '70EAF03FB4D5F36D396E51AEBCA81C6725BD02A52F450FCC6C76155B5B3CE43D') { throw 'Constants hash mismatch' }
+          & (Join-Path $source 'build.ps1') -SolidWorksApiPath $api
+      - name: Verify and package
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & (Join-Path $env:RELEASE_SOURCE 'tests/RunR3Regression.ps1') -OutputDirectory (Join-Path $env:RUNNER_TEMP 'r4-ui') -UiOnly
+          & (Join-Path $env:RELEASE_SOURCE 'tools/Package.ps1') -OutputDirectory (Join-Path $env:RUNNER_TEMP 'r4-release')
+      - name: Publish tested assets
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = "https://api.github.com/repos/$env:RELEASE_REPO/releases"
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $tag = 'v1.2.6-0905-R4'
+          $existing = @(Invoke-RestMethod $base -Headers $headers) | Where-Object tag_name -eq $tag
+          if ($existing) { throw 'Release already exists; refusing to overwrite it.' }
+          $body = Get-Content (Join-Path $env:RELEASE_SOURCE 'RELEASE_NOTES_R4.md') -Raw
+          $payload = @{ tag_name=$tag; target_commitish=$env:RELEASE_COMMIT; name='Master Miao v1.2.6 · 0905-R4'; body=$body; draft=$true; prerelease=$true } | ConvertTo-Json
+          $release = Invoke-RestMethod $base -Method Post -Headers $headers -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($payload))
+          $zip = Join-Path $env:RUNNER_TEMP 'r4-release/Master-Miao-v1.2.6-0905-R4.zip'
+          $sums = Join-Path $env:RUNNER_TEMP 'r4-release/SHA256SUMS.txt'
+          ((Get-FileHash $zip).Hash + '  ' + [IO.Path]::GetFileName($zip)) | Set-Content $sums -Encoding utf8
+          foreach ($asset in @($zip,$sums)) {
+            $name = [Uri]::EscapeDataString([IO.Path]::GetFileName($asset))
+            $url = "https://uploads.github.com/repos/$env:RELEASE_REPO/releases/$($release.id)/assets?name=$name"
+            $uploaded = Invoke-RestMethod $url -Method Post -Headers $headers -ContentType 'application/octet-stream' -InFile $asset
+            if ($uploaded.size -ne (Get-Item $asset).Length -or $uploaded.state -ne 'uploaded') { throw 'Incomplete release asset upload' }
+          }
+          $published = Invoke-RestMethod "$base/$($release.id)" -Method Patch -Headers $headers -ContentType 'application/json' -Body '{"draft":false,"prerelease":true,"make_latest":"false"}'
+          $published.html_url | Out-File $env:GITHUB_STEP_SUMMARY -Append

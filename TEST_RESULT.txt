@@ -1,99 +1,70 @@
-Master Miao V1.2.5 测试结果
-==========================================
+Master Miao V1.2.6 — 测试候选版 / TEST CANDIDATE
+Local revision: 0905-R4 / FileVersion 1.2.6.4
+Latest evidence: R4_UI_NOTES.md
+R4: backend file hashes/protected operations match R3.
+R4: bilingual 1540/1100 layout, menus, sidebar, classification workspace and editing regressions passed.
+R4: loaded 94 saved records/previews; original fixture byte-identical. No SolidWorks work.
+R3 HISTORY / R3历史 (R3_CHANGES_AND_TESTS.md):
+R3: bilingual navigation/shortcuts/modal progress/STEP-only routing and recovery passed.
+R3: startup, editing, 25 storage checks, prior folder/identity/report/build guards passed.
+R3: isolated tests only; real SolidWorks STEP-only output remains unverified.
 
-测试日期：2026-09-04
-SolidWorks：2024 / Revision 32.0.1
-程序文件：MasterMiao.exe
-程序版本：1.2.5.0
+R2 HISTORY / R2历史 (R2_FIX_VALIDATION.md):
+R2: real SolidWorks 2024 scan = 94 solids from an isolated saved copy (previews disabled).
+R2: actual WinForms grid = 94 -> 71 -> 94 -> 71 after toggling deduplication.
+R2: editing/button/autosave, source-share-lock and identity-contract regressions passed.
+R2: desktop locator attachment failed with MK_E_UNAVAILABLE; complete locate/export NOT accepted.
 
-品牌资源：
-- 软件名称、窗口标题、页眉：Master Miao / MASTER MIAO
-- 原始 PNG 与用户文件 SHA-256 一致：通过
-- ICO 尺寸：9 个（16–256 像素）
-- EXE 嵌入图标及窗口图标提取：通过
-- Excel 创建者/Application 元数据：Master Miao
+以下为R1及更早候选历史 / R1 and earlier candidate history follows:
+Date: 2026-09-05
+完整证据 / Full evidence: VALIDATION.md
+逐条验收 / Checklist: ACCEPTANCE_CHECKLIST.md
 
-构建与界面：
-- x64 Release 编译：通过
-- 真实启动分支（不抑制启动提示）：通过，退出码 0
-- 输入法安全改名逻辑自检：通过，退出码 0
-- 改名覆盖编辑框界面截图：通过，退出码 0
-- 窗口句柄创建前不再调用 BeginInvoke：通过
-- 中文主界面截图：通过
-- English 主界面截图：通过
-- 逐项整理三视图截图：通过
-- 列表三缩略图、多选、批量分类、缩放控件：通过
-- 主页面“打开 SolidWorks”按钮：通过
-- STEP 存放模式在 1540×920 与 1100×720 界面：通过
-- 中英文 STEP 存放选项与路径说明：通过
+本版本不能宣称已通过全部生产导出验收。
+This build is not fully accepted for production export.
 
-V1.2.5 改名回归：
-- 导出名称双击后打开持久覆盖编辑框：通过
-- 连续多字符输入期间不提前写回数据模型：通过
-- 模拟输入法 Enter 选字不会结束编辑：通过
-- 点击“命名完毕”提交并同步重复件组：通过
-- 点击其他单元格提交：通过
-- Esc 取消路径：已实现
+通过 / PASSED
+- V1.2.5 autosave interruption reproduced with the same real WinForms harness.
+- V1.2.6 IME-safe overlay owns Enter; saved + unsaved editing passed 11.2 seconds each with Enter/Finish/Esc.
+- Actual guided Save-and-next/Previous button clicks preserve name/category through autosave, stale main-grid values and saved JSON.
+- V1.2.5-compatible linear scan request and O(n) edit restoration self-tests pass; export identity checks remain strict.
+- Suspected candidates do not silently merge; explicit confirmed groups are isolated.
+- Project persistence: 25 actual filesystem/process checks.
+- Build interop copy: 3 matching/mismatching/locked-file checks.
+- Output planning, source collision prevention, atomic backup/failure preservation.
+- Bilingual XLSX: 25 columns, three proportional images, numeric quantities,
+  source occurrences, per-format outcomes, literal text, filter and freeze panes.
+- Actual report importer checks found no formula errors; saved image aspect ratios verified.
+- Earlier V1.2.6 candidate on SW 2024 (32.0.1): 94 bodies / 282 PNGs / 0 preview failures.
+- Scan retained one source document for locating; elapsed approximately 356 seconds.
+- Original source SHA-256 unchanged.
 
-STEP 双目录路径：
-- 原模式兼容：SLDPRT 与 STEP 根目录一致
-- 独立模式：主输出\零件源文件 与 主输出\STEP生产文件
-- 分类树镜像：通过
-- 零件 STEP 归位到 STEP生产文件：通过
-- 装配体 STEP 归位到 STEP生产文件根目录：通过
-- STEP 未混入零件源文件目录：通过
-- 自动编号跨两套目录检测重名：通过
+性能单次观测 / Single-run UI observation (same saved 94-body project)
+V1.2.5: 3.03 s / 214.04 MB peak working set.
+V1.2.6 final: 1.499 s / 90.46 MB.
+This is not a CAD throughput benchmark.
 
-SolidWorks 读取生命周期：
-- 真实源文件读取：1/1 成功，94 个实体
-- 读取完成后保留 SolidWorks：通过
-- 保留源文档内部复核：1/1
-- 保留窗口标题：DB101P主草图 [只读]
-- 自动 / 手动 / 取消三种启动选择：已实现
-- 自动启动或连接失败后转手动重试并继续原任务：已实现并完成逻辑回归
-- 手动启动会话不自动关闭：通过设计与请求身份检查
+限制与未执行 / LIMITS AND NOT RUN
+- Original read-only sample immediately became dirty in SW; refused safely.
+  A separate workspace copy was saved by SW before the successful scan.
+- After handoff, sandbox ROT enumeration returned zero objects;
+  automation attachment failed with 0x800401E3 (MK_E_UNAVAILABLE).
+- No system permissions, registry or macro-security settings were changed.
+- Retained SW session was not force-closed.
+- Current full SLDPRT + STEP + SLDASM export and STEP reimport geometry:
+  NOT ACCEPTED; needs same-privilege desktop testing.
+- Persistent references across reopening/configuration/order changes: pending.
+- Current revised scan path, native IME candidate window, native Excel image display, CAD cancellation,
+  session interference, disk-full/crash injection: pending.
+- Real Modeler mirror/hole-spacing/rotation counterexamples: compiled, NOT RUN.
+- Strict in-place kernel transform validation may conservatively reject symmetric solids.
+- Historical V1.1.2/V1.2.5 success is not counted as V1.2.6 evidence.
 
-去重逻辑：
-- 相同几何折叠为一个代表项：通过
-- 代表项名称、标签和导出选择同步整组：通过
-- 全项目范围分组：通过
+原文件SHA-256 / Original SHA-256
+6BCFA7DBF75148AD16267DCC11891F09C4F2703A0EEE0D36A1A1981F69E43279
 
-工作项目：
-- Schema：2
-- 样例源文件：1
-- 实体：94
-- 项目预览：282 张（94 × 3）
-- project.swbody.json 保存与重新读取：通过
-- 自动恢复、最近项目、源文件重新绑定/变化提醒：已实现
-
-Excel 自检：
-- 工作表：1
-- 列：15，范围 A1:O3
-- 测试记录：1
-- 嵌入图片对象：3（等轴测、前视、上视）
-- 数量列：数值
-- 公式错误：0
-- 结构与渲染检查：通过
-
-本轮 SolidWorks 回归：
-- 独立 SLDPRT：3/3 成功
-- 单实体验证：3/3 通过
-- 原位装配体：1/1 成功，3 个固定组件
-- Codex 后台隔离实例 STEP：失败，SAVE_FAILED|1|0
-- 可见窗口连接复验：因测试进程与 SolidWorks 权限级别不同，90 秒内未取得自动化活动对象
-- 两次测试后的 SLDWORKS 进程：0
-- 失败 STEP 正式提交：0
-
-已继承的 V1.1.2 真实用户桌面 STEP 验收：
-- 独立零件 STEP：3/3 成功
-- 装配体 STEP：1/1 成功
-- STEP 文件头：4/4 通过 ISO-10303-21
-- 宏日志：ITEM|0|OK|0|0、RESTORED|True、DONE
-- V1.2.4 增加校验后正式文件的双目录路由；V1.2.5 未修改 STEP 宏及装配体批量导出调用顺序
-
-源文件保护基线：
-- 大小：15,839,319 字节
-- UTC 修改时间：2026-09-03 08:39:18
-- SHA-256：6BCFA7DBF75148AD16267DCC11891F09C4F2703A0EEE0D36A1A1981F69E43279
-
-说明：Master Miao V1.2.5 已完成中文输入法安全改名，并保留 STEP 同目录 / 独立镜像双目录、读取、定位、装配体、报表及手动降级能力。名称逻辑、真实启动和目录路由均已回归；新的完整可见桌面 STEP 复验应在程序与 SolidWorks 使用相同 Windows 权限时执行。详细记录见 VALIDATION.md。
+交付 / PACKAGE
+MasterMiao.exe 1.2.6.0, compiled STEP macro, interop DLLs, bilingual documents,
+Source/build.ps1, source and regression tests.
+No user CAD files, projects, caches, recovery records or machine-specific logs.
+See SHA256SUMS.txt for packaged file integrity.

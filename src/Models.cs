@@ -11,6 +11,7 @@ namespace SWBodyOrganizer
     public sealed class AppProject
     {
         public int SchemaVersion { get; set; }
+        public string ProjectId { get; set; }
         public string Name { get; set; }
         public string TemplateName { get; set; }
         public string OutputRoot { get; set; }
@@ -22,10 +23,13 @@ namespace SWBodyOrganizer
         public List<SourceRecord> Sources { get; set; }
         public List<CategoryNode> Categories { get; set; }
         public ExportSettings Export { get; set; }
+        public WorkerRequest LastTaskRequest { get; set; }
+        public WorkerResponse LastTaskResponse { get; set; }
 
         public AppProject()
         {
-            SchemaVersion = 2;
+            SchemaVersion = 3;
+            ProjectId = Guid.NewGuid().ToString("N");
             Name = "未命名项目";
             TemplateName = "默认模板";
             OutputRoot = string.Empty;
@@ -48,6 +52,7 @@ namespace SWBodyOrganizer
         public string Name { get; set; }
         public long Length { get; set; }
         public long LastWriteTicks { get; set; }
+        public string ContentSha256 { get; set; }
         public string Configuration { get; set; }
         public int BodyCount { get; set; }
         public string Status { get; set; }
@@ -60,6 +65,7 @@ namespace SWBodyOrganizer
             Path = string.Empty;
             Name = string.Empty;
             Configuration = string.Empty;
+            ContentSha256 = string.Empty;
             Status = "待读取";
             Message = string.Empty;
             Bodies = new List<BodyRecord>();
@@ -73,6 +79,15 @@ namespace SWBodyOrganizer
         public string SourcePath { get; set; }
         public string SourceName { get; set; }
         public int Index { get; set; }
+        public string SourceSha256 { get; set; }
+        public string Configuration { get; set; }
+        public string PersistReference { get; set; }
+        public string GeometryEvidenceKey { get; set; }
+        public double[] GeometryBounds { get; set; }
+        public double Volume { get; set; }
+        public double SurfaceArea { get; set; }
+        public string ConfirmedDuplicateGroupId { get; set; }
+        public bool CandidateSuppressed { get; set; }
         public string OriginalName { get; set; }
         public string ExportName { get; set; }
         public string CategoryId { get; set; }
@@ -92,6 +107,12 @@ namespace SWBodyOrganizer
             SourceId = string.Empty;
             SourcePath = string.Empty;
             SourceName = string.Empty;
+            SourceSha256 = string.Empty;
+            Configuration = string.Empty;
+            PersistReference = string.Empty;
+            GeometryEvidenceKey = string.Empty;
+            GeometryBounds = new double[0];
+            ConfirmedDuplicateGroupId = string.Empty;
             OriginalName = string.Empty;
             ExportName = string.Empty;
             CategoryId = CategoryNode.UnclassifiedId;
@@ -161,6 +182,7 @@ namespace SWBodyOrganizer
 
     public sealed class ExportSettings
     {
+        public bool StepOnly { get; set; }
         public bool ExportSldprt { get; set; }
         public bool ExportStep { get; set; }
         public bool SeparateStepOutput { get; set; }
@@ -183,6 +205,9 @@ namespace SWBodyOrganizer
 
     public sealed class WorkerRequest
     {
+        public string TaskId { get; set; }
+        public DateTime StartedUtc { get; set; }
+        public string CheckpointPath { get; set; }
         public string Operation { get; set; }
         public string CacheRoot { get; set; }
         public string CancelFile { get; set; }
@@ -198,6 +223,8 @@ namespace SWBodyOrganizer
 
         public WorkerRequest()
         {
+            TaskId = Guid.NewGuid().ToString("N");
+            CheckpointPath = string.Empty;
             Operation = string.Empty;
             CacheRoot = string.Empty;
             CancelFile = string.Empty;
@@ -212,6 +239,9 @@ namespace SWBodyOrganizer
 
     public sealed class WorkerResponse
     {
+        public string TaskId { get; set; }
+        public DateTime StartedUtc { get; set; }
+        public DateTime CompletedUtc { get; set; }
         public bool Success { get; set; }
         public bool Cancelled { get; set; }
         public string Message { get; set; }
@@ -228,6 +258,7 @@ namespace SWBodyOrganizer
 
         public WorkerResponse()
         {
+            TaskId = string.Empty;
             Message = string.Empty;
             SolidWorksRevision = string.Empty;
             TemplatePath = string.Empty;
@@ -252,8 +283,16 @@ namespace SWBodyOrganizer
         public string PreviewTop { get; set; }
         public string PreviewIso { get; set; }
         public string GeometryKey { get; set; }
+        public string SourceSha256 { get; set; }
+        public string Configuration { get; set; }
+        public string PersistReference { get; set; }
+        public string GeometryEvidenceKey { get; set; }
+        public double[] GeometryBounds { get; set; }
+        public double Volume { get; set; }
+        public double SurfaceArea { get; set; }
         public int Quantity { get; set; }
         public List<string> Occurrences { get; set; }
+        public List<BodyRecord> DuplicateMembers { get; set; }
 
         public ExportPlanItem()
         {
@@ -267,13 +306,29 @@ namespace SWBodyOrganizer
             PreviewTop = string.Empty;
             PreviewIso = string.Empty;
             GeometryKey = string.Empty;
+            SourceSha256 = string.Empty;
+            Configuration = string.Empty;
+            PersistReference = string.Empty;
+            GeometryEvidenceKey = string.Empty;
+            GeometryBounds = new double[0];
             Quantity = 1;
             Occurrences = new List<string>();
+            DuplicateMembers = new List<BodyRecord>();
         }
     }
 
     public sealed class ExportResultItem
     {
+        public string PlannedExportName { get; set; }
+        public List<string> Occurrences { get; set; }
+        public string Outcome { get; set; }
+        public string SldprtVerification { get; set; }
+        public string StepVerification { get; set; }
+        public string AssemblyStepStatus { get; set; }
+        public double ExpectedVolume { get; set; }
+        public double ExpectedArea { get; set; }
+        public double[] ExpectedBounds { get; set; }
+        public string ExpectedGeometryEvidenceKey { get; set; }
         public string BodyId { get; set; }
         public string SourcePath { get; set; }
         public string SourceName { get; set; }
@@ -296,6 +351,14 @@ namespace SWBodyOrganizer
 
         public ExportResultItem()
         {
+            PlannedExportName = string.Empty;
+            Occurrences = new List<string>();
+            Outcome = "未执行";
+            SldprtVerification = "未验证";
+            StepVerification = "未验证";
+            AssemblyStepStatus = "未启用";
+            ExpectedBounds = new double[0];
+            ExpectedGeometryEvidenceKey = string.Empty;
             BodyId = string.Empty;
             SourcePath = string.Empty;
             SourceName = string.Empty;
@@ -354,22 +417,42 @@ namespace SWBodyOrganizer
     public static class AppPaths
     {
         public static readonly string Base = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
-        public static readonly string Data = Path.Combine(Base, "Data");
-        public static readonly string Templates = Path.Combine(Data, "Templates");
-        public static readonly string Cache = Path.Combine(Data, "Cache");
-        public static readonly string Jobs = Path.Combine(Data, "Jobs");
-        public static readonly string Backups = Path.Combine(Data, "Backups");
-        public static readonly string Recovery = Path.Combine(Data, "Recovery");
-        public static readonly string Settings = Path.Combine(Data, "settings.json");
+        private static string data = Path.Combine(Base, "Data");
+        public static string Data { get { return data; } private set { data = value; } }
+        public static string Templates { get { return Path.Combine(Data, "Templates"); } }
+        public static string Cache { get { return Path.Combine(Data, "Cache"); } }
+        public static string Jobs { get { return Path.Combine(Data, "Jobs"); } }
+        public static string Backups { get { return Path.Combine(Data, "Backups"); } }
+        public static string Recovery { get { return Path.Combine(Data, "Recovery"); } }
+        public static string Settings { get { return Path.Combine(Data, "settings.json"); } }
+        public static string StartupDiagnostic { get; private set; }
+        private static bool ensured;
 
         public static void Ensure()
         {
-            Directory.CreateDirectory(Data);
+            if (ensured) return;
+            string preferred = Data;
+            try { VerifyWritable(preferred); }
+            catch (Exception ex)
+            {
+                Data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MasterMiao", NameRules.ShortHash(Base), "Data");
+                VerifyWritable(Data);
+                StartupDiagnostic = "程序目录不可写，工作数据改存 / Application folder is not writable; data is stored at:\n" + Data + "\n" + ex.Message;
+            }
             Directory.CreateDirectory(Templates);
             Directory.CreateDirectory(Cache);
             Directory.CreateDirectory(Jobs);
             Directory.CreateDirectory(Backups);
             Directory.CreateDirectory(Recovery);
+            ensured = true;
+        }
+
+        internal static void VerifyWritable(string folder)
+        {
+            Directory.CreateDirectory(folder);
+            string probe = Path.Combine(folder, ".write-check-" + Guid.NewGuid().ToString("N"));
+            using (FileStream stream = new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose))
+            { stream.WriteByte(0); stream.Flush(true); }
         }
     }
 
@@ -381,6 +464,8 @@ namespace SWBodyOrganizer
         public string LastOutputRoot { get; set; }
         public string LastProjectPath { get; set; }
         public List<string> RecentProjects { get; set; }
+        public int LocateShortcut { get; set; }
+        public int DeduplicateShortcut { get; set; }
 
         public UserSettings()
         {
@@ -431,17 +516,59 @@ namespace SWBodyOrganizer
 
         public static T Load<T>(string path)
         {
-            return CreateSerializer().Deserialize<T>(File.ReadAllText(path, Encoding.UTF8));
+            bool recovered;
+            return Load<T>(path, out recovered);
         }
 
-        public static void Save<T>(string path, T value)
+        public static T Load<T>(string path, out bool recovered)
         {
-            string parent = Path.GetDirectoryName(path);
-            if (!string.IsNullOrWhiteSpace(parent)) Directory.CreateDirectory(parent);
-            string temporary = path + ".tmp";
-            File.WriteAllText(temporary, CreateSerializer().Serialize(value), new UTF8Encoding(false));
-            if (File.Exists(path)) File.Delete(path);
-            File.Move(temporary, path);
+            recovered = false;
+            try { return Read<T>(path); }
+            catch (Exception primary)
+            {
+                if (!(primary is IOException) && !(primary is ArgumentException) && !(primary is InvalidOperationException)) throw;
+                if (!File.Exists(path + ".bak")) throw;
+                try { T result = Read<T>(path + ".bak"); recovered = true; return result; }
+                catch { throw new IOException("项目及备份均无法读取 / Neither the document nor its backup could be read: " + path, primary); }
+            }
+        }
+
+        private static T Read<T>(string path)
+        {
+            T result = CreateSerializer().Deserialize<T>(File.ReadAllText(path, Encoding.UTF8));
+            if (object.Equals(result, null)) throw new InvalidOperationException("JSON document contains no data.");
+            return result;
+        }
+
+        public static void Save<T>(string path, T value) { SaveChecked(path, value, null); }
+
+        internal static void SaveChecked<T>(string path, T value, string expectedHash)
+        {
+            path = Path.GetFullPath(path);
+            string serialized = CreateSerializer().Serialize(value);
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            // A distinct temp file and a cross-process exclusive lock prevent interleaved writers.
+            using (FileStream lease = new FileStream(path + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            {
+                if (expectedHash != null && !string.Equals(expectedHash, File.Exists(path) ? ProjectStore.ContentHash(path) : string.Empty, StringComparison.Ordinal))
+                    throw new IOException("项目已被另一实例修改，请重新打开后再保存 / Another instance changed this project. Reopen it before saving.");
+                string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    byte[] bytes = new UTF8Encoding(false).GetBytes(serialized);
+                    using (FileStream stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    { stream.Write(bytes, 0, bytes.Length); stream.Flush(true); }
+                    if (File.Exists(path))
+                    {
+                        bool primaryValid = true;
+                        try { Read<object>(path); } catch (ArgumentException) { primaryValid = false; } catch (InvalidOperationException) { primaryValid = false; }
+                        // Replacing a damaged primary must not destroy the last good backup.
+                        File.Replace(temporary, path, primaryValid ? path + ".bak" : null, true);
+                    }
+                    else File.Move(temporary, path);
+                }
+                finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            }
         }
 
         public static T Clone<T>(T value)

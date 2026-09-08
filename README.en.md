@@ -1,123 +1,66 @@
-# Master Miao V1.2.5
+# Master Miao V1.2.6
 
-[中文](README.md) | [English](README.en.md) | [Development history](DEVELOPMENT_HISTORY.md) | [Architecture](ARCHITECTURE.md)
+Local revision: `0905-R4` (file version `1.2.6.4`). R4 refines R3's interface and interaction while keeping the scan/export backend unchanged. Check `Master Miao · V1.2.6 · 0905-R4` in the title. Save your project in the old program before switching, then Open project in R4; do not overwrite the old installation. See [R4_UI_NOTES.md](R4_UI_NOTES.md).
 
-**Master Miao** is a portable, offline Windows application for organizing and safely exporting SolidWorks multi-body parts. It can scan one or more `.SLDPRT` files, generate three previews for every body, rename and classify bodies, export verified single-body parts, optionally generate STEP files and in-place assemblies, and create an Excel report with embedded thumbnails.
+R3's sequential issue navigation, shortcuts, percentage dialog and STEP-only option are retained. R4 improves typography, tool grouping and narrow-window layouts, adding a collapsible sidebar and expanded classification workspace. Chinese and English are supported. See the R4 notes for current UI evidence and [R3_CHANGES_AND_TESTS.md](R3_CHANGES_AND_TESTS.md) for R3 features/backend limitations. R2 results below are historical.
 
-![Master Miao main window](docs/UI_PREVIEW.png)
+[中文](README.md) | [English](README.en.md) | [Background and history](DEVELOPMENT_HISTORY.md) | [V1.2.5 compatibility audit](V1.2.5_COMPATIBILITY_AUDIT.md) | [Architecture](ARCHITECTURE.md)
 
-This repository contains reproducible source code and validation documents. User projects, runtime `Data`, SolidWorks test models, build caches, and machine-specific paths are intentionally excluded. A ready-to-run V1.2.5 package is provided on the Releases page.
+Master Miao is a Windows utility for organizing SolidWorks multi-body parts. Import SLDPRT files, review three views, rename bodies, assign folder-based categories, and export individual parts, optional STEP files, in-place assemblies and illustrated Excel reports. The red-and-white interface retains the cat-and-wrench branding.
 
-## Requirements
+V1.2.6 is a stability and data-safety update based on V1.2.5. Current evidence is in [VALIDATION.md](VALIDATION.md); requirement status is in [ACCEPTANCE_CHECKLIST.md](ACCEPTANCE_CHECKLIST.md). Historical desktop successes are not presented as acceptance of this build.
 
-- Windows 10 or Windows 11 with .NET Framework 4.x.
-- A locally installed and working SolidWorks. The current build was validated against SolidWorks 2024, Revision 32.0.1.
-- Save documents already being edited before a scan or export, and do not operate SolidWorks while an automated task is running.
-- Master Miao may reuse one existing SolidWorks session. It stops when multiple SolidWorks processes are detected so it cannot attach to the wrong window.
+This is a test candidate. R2 scanned 94 solids from an isolated copy in real SolidWorks 2024. Active-object attachment then failed in the test environment, so complete desktop locating and full STEP/assembly export remain unaccepted. See [R2_FIX_VALIDATION.md](R2_FIX_VALIDATION.md) for scoped evidence. Test engineering copies before relying on production results.
 
-## Typical workflow
+## Requirements and startup
 
-1. Start `MasterMiao.exe` and select Chinese or English. The choice can be remembered and changed later in Settings.
-2. Drop or select one or more `.SLDPRT` files. After the SolidWorks notice is confirmed, Master Miao scans bodies and generates isometric, front, and top previews.
-3. Organize bodies in the table with multi-selection and batch classification. Double-click an export name to use the persistent editor; IME candidate confirmation and Enter keep it open, another cell or **Finish naming** commits it, and Esc cancels. Guided mode remains available for one-body-at-a-time work.
-4. A tag is also the destination folder. Create, rename, or remove categories in the tree, or drag blocks in the relationship view to change parent-child relationships.
-5. Optionally enable "Export one per identical geometry" to collapse equivalent bodies into one representative item. Changes to its name, category, and selection state apply to the whole group.
-6. Select the main output folder, formats, assembly option, STEP destination mode, and name-conflict policy, then export.
-7. Save unfinished work as a project folder containing `project.swbody.json` and `Previews`, and continue it later without copying the original SolidWorks files.
+- Windows 10/11 x64, .NET Framework 4.x, and a working local SolidWorks installation. Current testing uses SolidWorks 2024; other releases are not comprehensively verified.
+- Run this application and SolidWorks at the same Windows privilege level. Do not arbitrarily change system or macro security settings.
+- Extract the complete package, run `MasterMiao.exe`, and choose Chinese or English.
+- Drag in or select SLDPRT files. Confirm the SolidWorks access notice before scanning. If automatic startup fails, open SolidWorks manually and retry; an Open SolidWorks button is also available.
+- Source files are never saved by scanning, locating or exporting. A SolidWorks dirty flag caused by opening/rebuilding permits viewing and classification with a warning; actual export still rejects unsaved changes, configuration mismatch or a changed source SHA-256.
+- Successfully scanned source documents remain open for locating bodies. A session handed to the user is no longer considered an owned background process eligible for forced cleanup.
 
-## What's new in V1.2.5
+## Organizing parts
 
-- Replaces the short-lived DataGridView name editor with a persistent overlay editor positioned over the export-name cell.
-- IME candidate confirmation and Enter no longer terminate an edit. Clicking another cell, changing the selected source, or choosing **Finish naming** commits the value; Esc cancels it.
-- Adds regression coverage for character-by-character input, simulated IME Enter, click-away commit, and the name-edit UI. Assembly and window versions are now `1.2.5.0` and `V1.2.5`.
+1. Use three-view or compact lists, zoom, multi-selection, search and unclassified/failed/possible-duplicate filters. Visible scope and project-wide export scope are reported separately.
+2. Click a name to use the dedicated editor. IME selection and autosave do not commit drafts; Enter remains inside the editor for candidate confirmation. Finish naming or move to another cell to commit; Esc cancels. Guided mode commits name, category and selection together before navigation or return to the list.
+3. Tags are folder nodes. Drag blocks to change parents, reuse templates, preview batch names and undo recent edits. Sibling collisions and cycles are rejected; deleting a parent preserves and promotes its children.
+4. Checking “Export one per identical geometry” immediately folds matching rows; unchecking restores every record without deleting edits. Group edits share names, categories and selection. Exclude members needing separate production in duplicate review. Export verifies every folded solid against its representative and rejects a noncongruent group with an explanation. Quantities and all occurrences are retained. Review materials and finishes separately.
+5. “Locate in SW” resolves bodies in the open source document without hashing the disk file or rejecting its pending-save flag. Configuration mismatches and ambiguous identity still require a rescan. Export retains strict source and geometry checks.
+6. Geometry does not establish production equivalence. Material, processing, finish and custom properties require human review. In-place assemblies and one-per-group export are mutually exclusive to prevent missing instance positions.
+7. Choose the output root and formats. Options immediately update the project; a detached snapshot defines each running task. Task inputs are disabled while busy. Completion displays elapsed time, results and failure reasons.
 
-![V1.2.5 IME-safe name editor](docs/UI_NAME_EDIT.png)
+## Export integrity
 
-## Main capabilities
+- SLDPRT files are staged, reopened and checked for single solids, volume, area, precise bounds and geometric consistency before commit.
+- STEP requires SLDPRT and uses the bundled compiled macro for assembly batch export. After preferences are restored, files are reimported to check body count, geometry and placement; a STEP header alone is not acceptance.
+- Assemblies use verified current-task outputs. References, component count, fixed state and transforms are checked. Skipped, unverified old files are not trusted assembly inputs.
+- Conflicts support skip, global numbering and backup-before-replace. Planning includes both roots, assemblies and other planned names. Temporary files and atomic replacement preserve valid previous outputs.
+- Partial failure retains verified SLDPRT files. Checkpoints distinguish success, failure, unverified skips, cancellation and not-run items. Failed-only retry rechecks identities and dependencies.
+- Synchronous SolidWorks calls may delay cancellation until a safe boundary. The UI reports this explicitly and does not forcibly terminate user sessions.
 
-- Keeps multi-character and IME export-name editing active until the user deliberately finishes naming.
-- Detects installed SolidWorks versions, API availability, part and assembly templates, and the STEP export entry point.
-- Scans multiple source parts and keeps successfully scanned source documents open for later body highlighting.
-- Shows three thumbnails per body in the list and three larger views in Guided mode.
-- Supports 80%–200% list scaling, Ctrl + mouse wheel, multi-selection, batch classification, and filtering by source file.
-- Highlights one or more bodies from the same source inside an already-open SolidWorks document without saving it.
-- Supports reusable folder/tag templates and a draggable hierarchy editor.
-- Supports project save, delayed automatic save, recent projects, recovery records, source relocation, and source-change detection.
-- Provides Chinese and English interfaces and localized Excel report headers.
-- Uses isolated staging, single-body verification, STEP header verification, overwrite backups, and explicit failure messages.
-- Reports elapsed time, the actual number of files exported, and detailed failure causes.
+STEP can share each part's category folder or use parallel category trees under `零件源文件` (native files) and `STEP生产文件` (production STEP). Reports remain at their common root.
 
-## STEP destination modes
+The bilingual report includes three aspect-preserved images, actual and planned names, numeric quantities, all occurrences, actual paths and separate format/verification outcomes. Headers are frozen and filterable. Missing previews have text placeholders.
 
-STEP export always produces the verified SLDPRT files required by the assembly-based batch process.
+## Projects and recovery
 
-### Same folder as SLDPRT
+Projects contain JSON and a `Previews` folder. Images use immutable content-addressed filenames and relative references. Move the entire folder to retain previews; legacy schema 2 absolute references can be migrated.
 
-Each STEP file is stored beside its corresponding SLDPRT inside the assigned category folder. This preserves the behavior of earlier versions.
+Source CAD files are not copied into projects. Rebinding requires matching SHA-256; changed files require rescanning. Autosave writes committed model state only, with exclusive locking, atomic replacement and `.bak` backup. Errors remain visible and leave the project dirty. Recovery is isolated by application instance and project.
 
-### Separate mirrored folder trees
-
-Master Miao creates two roots under the selected main output folder:
-
-```text
-Main output/
-├─ 零件源文件/             # SLDPRT files and optional SLDASM
-│  └─ <mirrored categories>/
-├─ STEP生产文件/           # production STEP files and assembly STEP
-│  └─ <mirrored categories>/
-└─ 实体导出清单_*.xlsx
-```
-
-Both roots use the same category hierarchy. Source part files and production STEP files remain physically separate, while the Excel report records their real locations.
-
-## How STEP export works
-
-Master Miao first creates and verifies single-body SLDPRT files. It then builds a temporary or retained in-place assembly. The compiled `MasterMiao.StepMacro.dll` temporarily enables SolidWorks' option to export assembly components as individual STEP files and saves the assembly as STEP in one batch. The macro restores the original SolidWorks STEP option in success, failure, and exception paths.
-
-Generated STEP files remain in an isolated staging folder until the log confirms `RESTORED|True`, the batch reports success, and every file starts with the standard `ISO-10303-21;` header. Only then are files committed to their final folders. V1.2.4 introduced the final routing modes; V1.2.5 changes name editing only and does not change the tested SolidWorks macro sequence.
-
-The same export core was validated on a real user desktop in V1.1.2 with three independent SLDPRT files, three part STEP files, one in-place assembly, one assembly STEP, and one Excel report. The current automation environment could not repeat a complete visible-desktop STEP run because the test process and SolidWorks were running at different Windows integrity levels. This limitation remains documented instead of being reported as a successful V1.2.5 desktop STEP test.
-
-## Project persistence
-
-- The first manual save creates `<project name>_SWBO项目` at a user-selected location.
-- `project.swbody.json` stores source references, body names and tags, category hierarchy, output settings, selection state, zoom, guided-mode position, and latest export state.
-- `Previews` stores three PNG images for every body; original `.SLDPRT` files are never copied into the project.
-- Saved projects are automatically updated after edits. Unsaved sessions use `Data/Recovery` until a permanent project location is selected.
-- Missing source files can be rebound. Changed file size or modification time requires a rescan before export.
-
-Runtime data is intentionally stored beside the portable executable. When moving to a new extracted version, open the previously saved `project.swbody.json` or copy only the required templates and settings after reviewing them.
-
-## Safety boundaries
-
-- No service, installer, database, Office automation, or registry write is used.
-- Original SLDPRT files are opened with Silent + ReadOnly and are never saved by Master Miao.
-- Source identity, output writability, path safety, and available disk space are checked before export.
-- Parts are reopened and verified as single-body files before they enter the final output tree.
-- Assemblies are reopened and checked for component count, referenced paths, and fixed state.
-- STEP files must exist, be non-empty, and pass the standard header check.
-- Overwrite mode moves existing targets into `Data/Backups` before committing new files.
-- A SolidWorks session started by the application is identified by process ID and start time. A user-owned session is restored instead of being closed.
-
-## Known limitations
-
-- In-place assembly generation and geometry deduplication cannot be enabled together because a representative part cannot preserve every duplicate occurrence's original global position.
-- Assembly and batch STEP modes require globally unique final part names within the selected batch.
-- Body highlighting requires the source document to be open in the single active SolidWorks session.
-- The current scanner reads the active saved configuration; a configuration selector is not yet available.
-- Geometry deduplication is based on a fingerprint containing volume, area, topology counts, and face information. It is optional and disabled by default.
-- No automation can detect every possible manual action inside SolidWorks; users should still avoid interacting with it while a task notice is active.
-
-## Build from source
-
-The source consists of nine C# application files, one compiled STEP macro, and a reproducible multi-size icon script. It uses no NuGet packages.
-
-Run:
+## Development and build
 
 ```powershell
 .\build.ps1
+.\build.ps1 -SolidWorksApiPath 'D:\SOLIDWORKS\api\redist'
 ```
 
-The script uses the x64 .NET Framework compiler and references SolidWorks interop assemblies from the local SolidWorks installation. All build output is written to `build/`.
+Alternatively set `MASTER_MIAO_SW_API`. The build installs no global dependencies and changes no registry settings. Output goes to `build/`. Distribute the EXE, configuration, compiled macro and interop assemblies together. The implementation remains WinForms with a few focused helpers, without extra framework layers.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for file-by-file responsibilities and validation commands. See [DEVELOPMENT_HISTORY.md](DEVELOPMENT_HISTORY.md) for the product background, major design decisions, and version timeline.
+Developer documents are bilingual: [architecture](ARCHITECTURE.md), [changes](V1.2.6_CHANGES.md), [V1.2.5 compatibility audit](V1.2.5_COMPATIBILITY_AUDIT.md), [validation](VALIDATION.md). Tests are in `tests/`. Private CAD, work projects, caches and machine-specific records are excluded from public source and packages.
+
+## Scope limits
+
+This is not a standalone CAD kernel: export requires SolidWorks. The application does not install or license SolidWorks or change system configuration. Human duplicate confirmation does not replace engineering review. DXF, BOM, material recognition and online collaboration are deferred while stabilizing existing workflows.

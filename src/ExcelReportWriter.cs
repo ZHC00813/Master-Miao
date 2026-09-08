@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -14,8 +16,7 @@ namespace SWBodyOrganizer
         {
             string parent = Path.GetDirectoryName(path);
             if (!string.IsNullOrWhiteSpace(parent)) Directory.CreateDirectory(parent);
-            string temporary = path + ".tmp";
-            if (File.Exists(temporary)) File.Delete(temporary);
+            string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
 
             List<ExportResultItem> rows = results == null ? new List<ExportResultItem>() : results.ToList();
             List<PictureItem> pictures = new List<PictureItem>();
@@ -27,6 +28,8 @@ namespace SWBodyOrganizer
             }
             bool english = string.Equals(language, "en-US", StringComparison.OrdinalIgnoreCase);
 
+            try
+            {
             using (FileStream stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
             using (ZipArchive zip = new ZipArchive(stream, ZipArchiveMode.Create))
             {
@@ -37,7 +40,7 @@ namespace SWBodyOrganizer
                 WriteText(zip, "xl/workbook.xml", Workbook(english));
                 WriteText(zip, "xl/_rels/workbook.xml.rels", WorkbookRelationships());
                 WriteText(zip, "xl/styles.xml", Styles());
-                WriteText(zip, "xl/worksheets/sheet1.xml", Sheet(rows, projectName, outputRoot, pictures.Count > 0, english));
+                WriteText(zip, "xl/worksheets/sheet1.xml", Sheet(rows, projectName, outputRoot, pictures, english));
                 if (pictures.Count > 0)
                 {
                     WriteText(zip, "xl/worksheets/_rels/sheet1.xml.rels", SheetRelationships());
@@ -47,34 +50,52 @@ namespace SWBodyOrganizer
                     {
                         ZipArchiveEntry entry = zip.CreateEntry("xl/media/image" + picture.Id + ".png", CompressionLevel.Optimal);
                         using (Stream output = entry.Open())
-                        using (FileStream input = File.OpenRead(picture.Source)) input.CopyTo(output);
+                        using (Image input = Image.FromFile(picture.Source)) input.Save(output, System.Drawing.Imaging.ImageFormat.Png);
                     }
                 }
             }
-            if (File.Exists(path)) File.Delete(path);
-            File.Move(temporary, path);
+            // The old workbook remains usable if creating or replacing the new one fails.
+            if (File.Exists(path)) File.Replace(temporary, path, path + ".bak", true);
+            else File.Move(temporary, path);
+            }
+            finally
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
         }
 
         private static void AddPicture(List<PictureItem> pictures, int rowIndex, int columnIndex, string source, string viewName)
         {
             if (string.IsNullOrWhiteSpace(source) || !File.Exists(source)) return;
-            pictures.Add(new PictureItem { RowIndex = rowIndex, ColumnIndex = columnIndex, Source = source, ViewName = viewName, Id = pictures.Count + 1 });
+            try
+            {
+                using (Image image = Image.FromFile(source))
+                {
+                    // 16-character column, 72-point row: leave a five-pixel inset.
+                    double scale = Math.Min(104.0 / image.Width, 86.0 / image.Height);
+                    pictures.Add(new PictureItem { RowIndex = rowIndex, ColumnIndex = columnIndex, Source = source, ViewName = viewName, Id = pictures.Count + 1,
+                        WidthEmu = (long)Math.Round(image.Width * scale * 9525), HeightEmu = (long)Math.Round(image.Height * scale * 9525) });
+                }
+            }
+            catch (ArgumentException) { } // Invalid/missing previews are stated in their cells.
+            catch (IOException) { }
+            catch (OutOfMemoryException) { } // GDI+ reports invalid image data this way.
         }
 
-        private static string Sheet(List<ExportResultItem> rows, string projectName, string outputRoot, bool hasDrawing, bool english)
+        private static string Sheet(List<ExportResultItem> rows, string projectName, string outputRoot, List<PictureItem> pictures, bool english)
         {
             StringBuilder xml = new StringBuilder();
             xml.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
             xml.Append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
             xml.Append("<sheetViews><sheetView workbookViewId=\"0\"><pane ySplit=\"2\" topLeftCell=\"A3\" activePane=\"bottomLeft\" state=\"frozen\"/></sheetView></sheetViews>");
-            xml.Append("<cols><col min=\"1\" max=\"3\" width=\"16\" customWidth=\"1\"/><col min=\"4\" max=\"4\" width=\"24\" customWidth=\"1\"/><col min=\"5\" max=\"7\" width=\"22\" customWidth=\"1\"/><col min=\"8\" max=\"8\" width=\"10\" customWidth=\"1\"/><col min=\"9\" max=\"12\" width=\"46\" customWidth=\"1\"/><col min=\"13\" max=\"15\" width=\"24\" customWidth=\"1\"/></cols>");
+            xml.Append("<cols><col min=\"1\" max=\"3\" width=\"16\" customWidth=\"1\"/><col min=\"4\" max=\"4\" width=\"24\" customWidth=\"1\"/><col min=\"5\" max=\"7\" width=\"22\" customWidth=\"1\"/><col min=\"8\" max=\"8\" width=\"10\" customWidth=\"1\"/><col min=\"9\" max=\"12\" width=\"46\" customWidth=\"1\"/><col min=\"13\" max=\"22\" width=\"24\" customWidth=\"1\"/><col min=\"23\" max=\"25\" width=\"50\" customWidth=\"1\"/></cols>");
             xml.Append("<sheetData>");
             xml.Append("<row r=\"1\" ht=\"28\" customHeight=\"1\">");
             Cell(xml, "A1", string.Format(english ? "{0} | Exported body list | {1:yyyy-MM-dd HH:mm}" : "{0}｜实体导出清单｜{1:yyyy-MM-dd HH:mm}", projectName, DateTime.Now), 1);
             xml.Append("</row>");
             string[] headings = english
-                ? new[] { "Isometric", "Front", "Top", "Export name", "Source file", "Original body", "Category folder", "Quantity", "SLDPRT path", "STEP path", "Assembly path", "Assembly STEP path", "Assembly status", "Verification", "Notes" }
-                : new[] { "等轴测", "前视图", "上视图", "导出名称", "源文件", "原实体名称", "分类文件夹", "数量", "SLDPRT 路径", "STEP 路径", "装配体路径", "装配体 STEP 路径", "装配体状态", "验证状态", "备注" };
+                ? new[] { "Isometric", "Front", "Top", "Actual export name", "Source file", "Original body", "Category folder", "Quantity", "SLDPRT path", "STEP path", "Assembly path", "Assembly STEP path", "Assembly status", "Verification", "Failure / notes", "Planned name", "SLDPRT status", "STEP status", "Assembly STEP status", "Task outcome", "SLDPRT verification", "STEP verification", "All source instances", "Source path", "Output root" }
+                : new[] { "等轴测", "前视图", "上视图", "实际导出名称", "源文件", "原实体名称", "分类文件夹", "数量", "SLDPRT 路径", "STEP 路径", "装配体路径", "装配体 STEP 路径", "装配体状态", "验证状态", "失败原因 / 备注", "计划名称", "SLDPRT 状态", "STEP 状态", "装配体 STEP 状态", "任务结果", "SLDPRT 验证", "STEP 验证", "全部实例来源", "源文件完整路径", "输出根目录" };
             xml.Append("<row r=\"2\" ht=\"24\" customHeight=\"1\">");
             for (int i = 0; i < headings.Length; i++) Cell(xml, ColumnName(i + 1) + "2", headings[i], 2);
             xml.Append("</row>");
@@ -83,9 +104,8 @@ namespace SWBodyOrganizer
                 ExportResultItem item = rows[i];
                 int row = i + 3;
                 xml.AppendFormat("<row r=\"{0}\" ht=\"72\" customHeight=\"1\">", row);
-                Cell(xml, "A" + row, string.Empty, 3);
-                Cell(xml, "B" + row, string.Empty, 3);
-                Cell(xml, "C" + row, string.Empty, 3);
+                for (int view = 0; view < 3; view++)
+                    Cell(xml, ColumnName(view + 1) + row, pictures.Any(p => p.RowIndex == i + 2 && p.ColumnIndex == view) ? string.Empty : (english ? "Preview unavailable" : "预览不可用"), 3);
                 Cell(xml, "D" + row, item.ExportName, 3);
                 Cell(xml, "E" + row, item.SourceName, 3);
                 Cell(xml, "F" + row, item.OriginalName, 3);
@@ -97,22 +117,25 @@ namespace SWBodyOrganizer
                 Cell(xml, "L" + row, item.AssemblyStepPath, 4);
                 Cell(xml, "M" + row, LocalStatus(item.AssemblyStatus, english), 3);
                 Cell(xml, "N" + row, LocalStatus(item.VerificationStatus, english), 3);
-                Cell(xml, "O" + row, string.IsNullOrWhiteSpace(item.Message) ? StatusText(item, english) : item.Message, 3);
+                Cell(xml, "O" + row, item.Message, 3);
+                Cell(xml, "P" + row, item.PlannedExportName, 3);
+                Cell(xml, "Q" + row, LocalStatus(item.SldprtStatus, english), 3);
+                Cell(xml, "R" + row, LocalStatus(item.StepStatus, english), 3);
+                Cell(xml, "S" + row, LocalStatus(item.AssemblyStepStatus, english), 3);
+                Cell(xml, "T" + row, LocalStatus(item.Outcome, english), 3);
+                Cell(xml, "U" + row, LocalStatus(item.SldprtVerification, english), 3);
+                Cell(xml, "V" + row, LocalStatus(item.StepVerification, english), 3);
+                Cell(xml, "W" + row, string.Join("\n", (item.Occurrences ?? new List<string>()).ToArray()), 3);
+                Cell(xml, "X" + row, item.SourcePath, 4);
+                Cell(xml, "Y" + row, outputRoot, 4);
                 xml.Append("</row>");
             }
             xml.Append("</sheetData>");
-            xml.Append("<mergeCells count=\"1\"><mergeCell ref=\"A1:O1\"/></mergeCells>");
-            xml.AppendFormat("<autoFilter ref=\"A2:O{0}\"/>", Math.Max(2, rows.Count + 2));
-            if (hasDrawing) xml.Append("<drawing r:id=\"rId1\"/>");
+            xml.AppendFormat("<autoFilter ref=\"A2:Y{0}\"/>", Math.Max(2, rows.Count + 2));
+            xml.Append("<mergeCells count=\"1\"><mergeCell ref=\"A1:Y1\"/></mergeCells>");
+            if (pictures.Count > 0) xml.Append("<drawing r:id=\"rId1\"/>");
             xml.Append("</worksheet>");
             return xml.ToString();
-        }
-
-        private static string StatusText(ExportResultItem item, bool english)
-        {
-            return english
-                ? "SLDPRT: " + LocalStatus(item.SldprtStatus, true) + "; STEP: " + LocalStatus(item.StepStatus, true) + "; Assembly: " + LocalStatus(item.AssemblyStatus, true)
-                : "SLDPRT：" + item.SldprtStatus + "；STEP：" + item.StepStatus + "；装配体：" + item.AssemblyStatus;
         }
 
         private static string LocalStatus(string value, bool english)
@@ -122,8 +145,17 @@ namespace SWBodyOrganizer
             if (value == "失败") return "Failed";
             if (value == "未启用") return "Disabled";
             if (value == "未验证") return "Not verified";
-            if (value.Contains("验证通过")) return "Verified";
-            if (value.StartsWith("跳过", StringComparison.Ordinal)) return "Skipped";
+            if (value == "本次成功") return "Generated this task";
+            if (value == "沿用且已验证") return "Reused and verified";
+            if (value == "跳过但未验证") return "Skipped, not verified";
+            if (value == "取消" || value == "已取消") return "Cancelled";
+            if (value == "未执行") return "Not executed";
+            if (value == "部分失败") return "Partially failed";
+            if (value == "单实体验证通过") return "Single body verified";
+            if (value == "文件头通过") return "Header checked";
+            if (value == "可重新打开") return "Reopened";
+            if (value == "几何校验通过") return "Geometry verified";
+            if (value.StartsWith("跳过", StringComparison.Ordinal)) return "Skipped, not verified";
             return value;
         }
 
@@ -144,12 +176,14 @@ namespace SWBodyOrganizer
             foreach (PictureItem picture in pictures)
             {
                 xml.Append("<xdr:oneCellAnchor><xdr:from>");
-                xml.AppendFormat("<xdr:col>{1}</xdr:col><xdr:colOff>47625</xdr:colOff><xdr:row>{0}</xdr:row><xdr:rowOff>47625</xdr:rowOff>", picture.RowIndex, picture.ColumnIndex);
-                xml.Append("</xdr:from><xdr:ext cx=\"1143000\" cy=\"685800\"/><xdr:pic><xdr:nvPicPr>");
-                xml.AppendFormat("<xdr:cNvPr id=\"{0}\" name=\"{1} {0}\"/><xdr:cNvPicPr/>", picture.Id, Escape(picture.ViewName));
+                long x = 47625 + (990600 - picture.WidthEmu) / 2;
+                long y = 47625 + (819150 - picture.HeightEmu) / 2;
+                xml.AppendFormat(CultureInfo.InvariantCulture, "<xdr:col>{1}</xdr:col><xdr:colOff>{2}</xdr:colOff><xdr:row>{0}</xdr:row><xdr:rowOff>{3}</xdr:rowOff>", picture.RowIndex, picture.ColumnIndex, x, y);
+                xml.AppendFormat(CultureInfo.InvariantCulture, "</xdr:from><xdr:ext cx=\"{0}\" cy=\"{1}\"/><xdr:pic><xdr:nvPicPr>", picture.WidthEmu, picture.HeightEmu);
+                xml.AppendFormat("<xdr:cNvPr id=\"{0}\" name=\"{1} {0}\"/><xdr:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></xdr:cNvPicPr>", picture.Id, Escape(picture.ViewName));
                 xml.Append("</xdr:nvPicPr><xdr:blipFill>");
                 xml.AppendFormat("<a:blip r:embed=\"rId{0}\"/><a:stretch><a:fillRect/></a:stretch>", picture.Id);
-                xml.Append("</xdr:blipFill><xdr:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"1143000\" cy=\"685800\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>");
+                xml.AppendFormat(CultureInfo.InvariantCulture, "</xdr:blipFill><xdr:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{0}\" cy=\"{1}\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>", picture.WidthEmu, picture.HeightEmu);
             }
             xml.Append("</xdr:wsDr>");
             return xml.ToString();
@@ -233,6 +267,8 @@ namespace SWBodyOrganizer
             public string Source;
             public string ViewName;
             public int Id;
+            public long WidthEmu;
+            public long HeightEmu;
         }
     }
 }

@@ -18,10 +18,11 @@ namespace SWBodyOrganizerStepMacro
         {
             string jobPath = Path.Combine(Path.GetTempPath(), "SWBodyOrganizer.StepJob." + swApp.GetProcessID().ToString(CultureInfo.InvariantCulture) + ".txt");
             string[] lines = File.ReadAllLines(jobPath, Encoding.UTF8);
-            if (lines.Length < 2) throw new InvalidDataException("STEP job file is incomplete.");
+            if (lines.Length < 3) throw new InvalidDataException("STEP job file is incomplete.");
 
             string logPath = Decode(lines[0]);
             string originalActiveTitle = Decode(lines[1]);
+            string cancelFile = Decode(lines[2]);
             List<string> log = new List<string>();
             bool originalAtomic = false;
             bool preferenceRead = false;
@@ -31,11 +32,17 @@ namespace SWBodyOrganizerStepMacro
                 preferenceRead = true;
                 swApp.SetUserPreferenceToggle(786, true);
                 log.Add("BEGIN|atomicOriginal=" + originalAtomic.ToString(CultureInfo.InvariantCulture));
-                for (int index = 2; index < lines.Length; index++)
+                for (int index = 3; index < lines.Length; index++)
                 {
+                    if (!string.IsNullOrWhiteSpace(cancelFile) && File.Exists(cancelFile))
+                    {
+                        log.Add("ITEM|" + (index - 3).ToString(CultureInfo.InvariantCulture) + "|CANCELLED|0|0");
+                        break;
+                    }
                     string[] fields = lines[index].Split(new[] { '\t' }, 2);
                     string result = fields.Length == 2 ? ExportOne(Decode(fields[0]), Decode(fields[1])) : "INVALID_JOB|0|0";
-                    log.Add("ITEM|" + (index - 2).ToString(CultureInfo.InvariantCulture) + "|" + result);
+                    log.Add("ITEM|" + (index - 3).ToString(CultureInfo.InvariantCulture) + "|" + result);
+                    File.WriteAllLines(logPath, log.ToArray(), Encoding.UTF8);
                 }
             }
             catch (Exception ex)
@@ -64,11 +71,15 @@ namespace SWBodyOrganizerStepMacro
         {
             ModelDoc2 model = null;
             string title = string.Empty;
+            bool alreadyOpen = false;
             try
             {
                 int openErrors = 0, openWarnings = 0;
-                model = swApp.OpenDoc6(assemblyPath, 2, 1, string.Empty, ref openErrors, ref openWarnings) as ModelDoc2;
+                model = swApp.GetOpenDocumentByName(assemblyPath) as ModelDoc2;
+                alreadyOpen = model != null;
+                if (model == null) model = swApp.OpenDoc6(assemblyPath, 2, 3, string.Empty, ref openErrors, ref openWarnings) as ModelDoc2;
                 if (model == null) return "OPEN_FAILED|" + openErrors.ToString(CultureInfo.InvariantCulture) + "|" + openWarnings.ToString(CultureInfo.InvariantCulture);
+                if (model.GetSaveFlag()) return "INTERFERENCE|UNSAVED_ASSEMBLY|0";
                 title = model.GetTitle();
                 int activateErrors = 0;
                 swApp.ActivateDoc3(title, false, 0, ref activateErrors);
@@ -89,7 +100,7 @@ namespace SWBodyOrganizerStepMacro
             }
             finally
             {
-                if (!string.IsNullOrWhiteSpace(title)) try { swApp.CloseDoc(title); } catch { }
+                if (!alreadyOpen && !string.IsNullOrWhiteSpace(title)) try { swApp.CloseDoc(title); } catch { }
             }
         }
 

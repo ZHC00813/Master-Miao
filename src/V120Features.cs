@@ -83,6 +83,7 @@ namespace SWBodyOrganizer
                 !ShouldCommitDirtyCell(new DataGridViewCheckBoxCell()) ||
                 !ShouldCommitDirtyCell(new DataGridViewComboBoxCell())) return false;
             if (!RunExportNameEditSelfTest()) return false;
+            if (!RunScanCompatibilitySelfTest()) return false;
             WorkerRequest lifecycleRequest = new WorkerRequest { Operation = "scan", KeepSourceDocumentsOpen = true };
             WorkerResponse lifecycleResponse = new WorkerResponse { Success = true, SolidWorksKeptOpen = true };
             SourceRecord completedSource = new SourceRecord { Status = "读取完成" };
@@ -101,6 +102,7 @@ namespace SWBodyOrganizer
             List<BodyRecord> all = project.AllBodies().ToList();
             if (all.Count < 2) return false;
             Dictionary<string, string> originalKeys = all.ToDictionary(body => body.Id, body => body.GeometryKey);
+            Dictionary<string, string> originalConfirmedGroups = all.ToDictionary(body => body.Id, body => body.ConfirmedDuplicateGroupId);
             bool originalDeduplicate = project.Export.Deduplicate;
             string firstName = all[0].ExportName;
             string firstCategory = all[0].CategoryId;
@@ -114,13 +116,21 @@ namespace SWBodyOrganizer
                 all[0].GeometryKey = "v120-selftest-geometry";
                 all[1].GeometryKey = "v120-selftest-geometry";
                 project.Export.Deduplicate = true;
+                // The checkbox folds candidate rows immediately; export verifies solids.
+                if (GetDisplayBodies(string.Empty).Count != all.Count - 1) return false;
+                all[0].ConfirmedDuplicateGroupId = "v120-confirmed-group";
+                all[1].ConfirmedDuplicateGroupId = "v120-confirmed-group";
                 if (GetDisplayBodies(string.Empty).Count != all.Count - 1) return false;
                 ApplyToGroup(all[0], "V120_GROUP_TEST", CategoryNode.UnclassifiedId, false);
                 return all[1].ExportName == "V120_GROUP_TEST" && all[1].CategoryId == CategoryNode.UnclassifiedId && !all[1].ExportSelected;
             }
             finally
             {
-                foreach (BodyRecord body in all) body.GeometryKey = originalKeys[body.Id];
+                foreach (BodyRecord body in all)
+                {
+                    body.GeometryKey = originalKeys[body.Id];
+                    body.ConfirmedDuplicateGroupId = originalConfirmedGroups[body.Id];
+                }
                 all[0].ExportName = firstName;
                 all[0].CategoryId = firstCategory;
                 all[0].ExportSelected = firstSelected;
@@ -129,6 +139,28 @@ namespace SWBodyOrganizer
                 all[1].ExportSelected = secondSelected;
                 project.Export.Deduplicate = originalDeduplicate;
             }
+        }
+
+        private static bool RunScanCompatibilitySelfTest()
+        {
+            CategoryNode category = new CategoryNode { Id = "compat-category", Name = "兼容分类", ParentId = CategoryNode.RootId };
+            SourceRecord previous = new SourceRecord { Id = "source", ContentSha256 = "same" };
+            previous.Bodies.Add(new BodyRecord
+            {
+                Id = "stable-body", Index = 7, GeometryKey = "geometry-a", ExportName = "用户名称",
+                CategoryId = category.Id, ExportSelected = false, ConfirmedDuplicateGroupId = "confirmed", CandidateSuppressed = true
+            });
+            SourceRecord scanned = new SourceRecord { Id = "source", ContentSha256 = "same" };
+            scanned.Bodies.Add(new BodyRecord { Id = "new-id", Index = 7, GeometryKey = "geometry-a", ExportName = "默认名称" });
+            RestoreScanEdits(previous, scanned, new List<CategoryNode> { category });
+            BodyRecord restored = scanned.Bodies[0];
+            if (restored.Id != "stable-body" || restored.ExportName != "用户名称" || restored.CategoryId != category.Id ||
+                restored.ExportSelected || restored.ConfirmedDuplicateGroupId != "confirmed" || !restored.CandidateSuppressed) return false;
+
+            SourceRecord changed = new SourceRecord { Id = "source", ContentSha256 = "changed" };
+            changed.Bodies.Add(new BodyRecord { Id = "changed-id", Index = 7, GeometryKey = "geometry-b", ExportName = "新几何" });
+            RestoreScanEdits(previous, changed, new List<CategoryNode> { category });
+            return changed.Bodies[0].Id == "changed-id" && changed.Bodies[0].ExportName == "新几何";
         }
 
         private bool RunExportNameEditSelfTest()
@@ -185,8 +217,17 @@ namespace SWBodyOrganizer
 
         private void ApplyLanguage()
         {
-            Text = "Master Miao · V1.2.5";
+            Text = "Master Miao · " + UiBrand.VersionCaption;
             UiText.Apply(this);
+            if (bodyFilter.Items.Count > 0)
+            {
+                int selectedFilter = bodyFilter.SelectedIndex;
+                bool oldRefreshing = gridRefreshing; gridRefreshing = true;
+                bodyFilter.Items.Clear();
+                bodyFilter.Items.AddRange(new object[] { UiText.T("全部状态", "All statuses"), UiText.T("未分类", "Unclassified"), UiText.T("失败", "Failed"), UiText.T("疑似重复", "Possible duplicates") });
+                bodyFilter.SelectedIndex = Math.Max(0, selectedFilter);
+                gridRefreshing = oldRefreshing;
+            }
             if (conflictCombo.Items.Count > 0)
             {
                 int policyIndex = conflictCombo.SelectedIndex < 0 ? 0 : conflictCombo.SelectedIndex;
@@ -235,10 +276,11 @@ namespace SWBodyOrganizer
                 if (dialog.ShowDialog(this) != DialogResult.OK) return;
                 dialog.ApplySelection();
                 ApplyLanguage();
+                DisposeGridImages(); DisposeThumbnailCache();
                 RefreshSources();
                 RefreshGrid();
                 UpdateEnvironmentSummary();
-                progressLabel.Text = UiText.T("语言设置已保存。", "Language setting saved.");
+                progressLabel.Text = UiText.T("设置已保存。", "Settings saved.");
             }
         }
 
@@ -293,8 +335,8 @@ namespace SWBodyOrganizer
             int nearest = values.OrderBy(value => Math.Abs(value - percent)).First();
             float scale = nearest / 100F;
             project.ListZoomPercent = nearest;
-            bodyGrid.DefaultCellStyle.Font = new Font("Microsoft YaHei UI", Math.Max(7.2F, 9F * scale));
-            bodyGrid.ColumnHeadersDefaultCellStyle.Font = new Font("Microsoft YaHei UI", Math.Max(7.2F, 9F * scale), FontStyle.Bold);
+            bodyGrid.DefaultCellStyle.Font = UiBrand.CreateFont(Math.Max(9F, UiBrand.BaseFontSize * scale));
+            bodyGrid.ColumnHeadersDefaultCellStyle.Font = UiBrand.CreateFont(Math.Max(9F, UiBrand.BaseFontSize * scale), FontStyle.Bold);
             bodyGrid.RowTemplate.Height = Math.Max(62, (int)Math.Round(78 * scale));
             bodyGrid.ColumnHeadersHeight = Math.Max(29, (int)Math.Round(34 * scale));
             SetColumnWidth("Selected", 42, scale);
@@ -302,8 +344,8 @@ namespace SWBodyOrganizer
             SetColumnWidth("ThumbnailFront", 92, scale);
             SetColumnWidth("ThumbnailTop", 92, scale);
             SetColumnWidth("OriginalName", 112, scale);
-            SetColumnWidth("ExportName", 142, scale);
-            SetColumnWidth("Category", 160, scale);
+            SetColumnWidth("ExportName", 175, scale);
+            SetColumnWidth("Category", 175, scale);
             SetColumnWidth("Quantity", 68, scale);
             SetColumnWidth("Status", 92, scale);
             foreach (DataGridViewRow row in bodyGrid.Rows) row.Height = bodyGrid.RowTemplate.Height;
@@ -326,13 +368,14 @@ namespace SWBodyOrganizer
 
         private List<BodyRecord> GetDisplayBodies(string sourceFilter)
         {
+            IndexDuplicateCandidates();
             List<BodyRecord> all = project.AllBodies().ToList();
-            if (!project.Export.Deduplicate)
-                return string.IsNullOrWhiteSpace(sourceFilter) ? all : all.Where(item => item.SourceId == sourceFilter).ToList();
-            return all.GroupBy(GeometryGroupKey)
+            IEnumerable<BodyRecord> display = !project.Export.Deduplicate
+                ? all.Where(item => string.IsNullOrWhiteSpace(sourceFilter) || item.SourceId == sourceFilter)
+                : all.GroupBy(GeometryGroupKey)
                 .Where(group => string.IsNullOrWhiteSpace(sourceFilter) || group.Any(item => item.SourceId == sourceFilter))
-                .Select(group => group.First())
-                .ToList();
+                .Select(group => group.FirstOrDefault(item => item.Id == issueFocusBodyId) ?? group.FirstOrDefault(item => item.ExportSelected) ?? group.First());
+            return FilterBodies(display).ToList();
         }
 
         private List<BodyRecord> GetGroupMembers(BodyRecord body)
@@ -345,7 +388,9 @@ namespace SWBodyOrganizer
 
         private static string GeometryGroupKey(BodyRecord body)
         {
-            return string.IsNullOrWhiteSpace(body.GeometryKey) ? "id:" + body.Id : "geometry:" + body.GeometryKey;
+            if (!string.IsNullOrWhiteSpace(body.ConfirmedDuplicateGroupId)) return "confirmed:" + body.ConfirmedDuplicateGroupId;
+            return body.CandidateSuppressed || string.IsNullOrWhiteSpace(body.GeometryKey)
+                ? "id:" + body.Id : "geometry:" + body.GeometryKey;
         }
 
         private void ApplyToGroup(BodyRecord body, string exportName, string categoryId, bool selected)
@@ -383,6 +428,8 @@ namespace SWBodyOrganizer
             using (CategoryChoiceDialog dialog = new CategoryChoiceDialog(project.Categories))
             {
                 if (dialog.ShowDialog(this) != DialogResult.OK) return;
+                CommitGrid();
+                RememberUndo();
                 foreach (BodyRecord body in selected)
                     foreach (BodyRecord member in GetGroupMembers(body)) member.CategoryId = dialog.CategoryId;
                 MarkProjectDirty();
@@ -401,7 +448,8 @@ namespace SWBodyOrganizer
                 return;
             }
             using (GuidedBodyForm dialog = new GuidedBodyForm(project, bodies, GetGroupMembers,
-                delegate { MarkProjectDirty(); }, LocateBodiesInSolidWorks))
+                delegate { MarkProjectDirty(); SyncGuidedModelToMain(); }, LocateBodiesInSolidWorks, RememberUndo,
+                delegate { dedupCheck.Checked = !dedupCheck.Checked; return GetDisplayBodies(string.Empty); }))
                 dialog.ShowDialog(this);
             MarkProjectDirty(false);
             RefreshGrid();
@@ -439,7 +487,7 @@ namespace SWBodyOrganizer
                 {
                     DataGridViewCell cell = bodyGrid.Columns.Contains(name) ? row.Cells[name] : null;
                     Image image = cell == null ? null : cell.Value as Image;
-                    if (image != null) { cell.Value = null; image.Dispose(); }
+                    if (image != null) { cell.Value = null; if (!thumbnailCache.Values.Contains(image)) image.Dispose(); }
                 }
         }
 
@@ -477,6 +525,7 @@ namespace SWBodyOrganizer
         private void MarkProjectDirty(bool invalidateExport)
         {
             if (suppressDirty) return;
+            storageRevision++;
             projectDirty = true;
             if (invalidateExport) project.LastExportSucceeded = false;
             UpdateWindowTitle();
@@ -485,12 +534,17 @@ namespace SWBodyOrganizer
         private void UpdateWindowTitle()
         {
             string name = string.IsNullOrWhiteSpace(project.Name) ? UiText.T("未命名项目", "Untitled project") : project.Name;
-            Text = "Master Miao · V1.2.5 · " + name + (projectDirty ? " *" : string.Empty);
+            Text = "Master Miao · " + UiBrand.VersionCaption + " · " + name + (projectDirty ? " *" : string.Empty);
         }
 
         private bool SaveProjectInteractive()
         {
             if (worker.IsBusy) return false;
+            if (storageSaving)
+            {
+                MessageBox.Show(this, UiText.T("自动保存正在完成，请稍后再保存。", "Autosave is finishing. Please save again in a moment."), "Master Miao", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return false;
+            }
             CommitGrid();
             if (string.IsNullOrWhiteSpace(currentProjectPath))
             {
@@ -534,59 +588,76 @@ namespace SWBodyOrganizer
 
         private void SaveProjectToPath(string path, bool copyPreviews)
         {
-            if (copyPreviews) CopyPreviewsIntoProject(Path.GetDirectoryName(path));
-            project.SchemaVersion = 2;
-            project.LastSavedUtc = DateTime.UtcNow;
-            JsonFile.Save(path, project);
+            ProjectStore.Save(path, project);
             currentProjectPath = path;
             projectDirty = false;
-            UserSettingsStore.RememberProject(path);
+            storageSavedRevision = storageRevision;
+            try { UserSettingsStore.RememberProject(path); }
+            catch (Exception ex) { progressLabel.Text = UiText.T("项目已保存，但最近记录未更新：", "Project saved; recent-project settings could not be updated: ") + ex.Message; }
             DeleteRecoveryFile();
             UpdateWindowTitle();
         }
 
+        private DateTime storageLastFailureNoticeUtc;
+        private string storageLastFailure = string.Empty;
+        private long storageRevision;
+        private long storageSavedRevision = -1;
+        private bool storageSaving;
+
         private void SaveProjectSilently()
         {
+            if (storageSaving || storageSavedRevision == storageRevision) return;
+            AppProject owner = project;
+            AppProject snapshot = JsonFile.Clone(project);
+            string path = currentProjectPath;
+            long revision = storageRevision;
+            storageSaving = true;
+            System.Threading.ThreadPool.QueueUserWorkItem(delegate
+            {
+                Exception failure = null;
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(path)) ProjectStore.Save(path, snapshot);
+                    else ProjectStore.SaveRecovery(snapshot);
+                }
+                catch (Exception ex) { failure = ex; }
+                if (IsDisposed || Disposing || !IsHandleCreated) return;
+                try { BeginInvoke((Action)delegate { CompleteStorageSave(owner, snapshot, path, revision, failure); }); }
+                catch (InvalidOperationException) { }
+            });
+        }
+
+        private void CompleteStorageSave(AppProject owner, AppProject snapshot, string path, long revision, Exception failure)
+        {
+            storageSaving = false;
+            if (!object.ReferenceEquals(project, owner)) return;
             try
             {
-                CommitGrid();
-                if (!string.IsNullOrWhiteSpace(currentProjectPath)) SaveProjectToPath(currentProjectPath, true);
-                else
-                {
-                    project.SchemaVersion = 2;
-                    project.LastSavedUtc = DateTime.UtcNow;
-                    JsonFile.Save(Path.Combine(AppPaths.Recovery, "autosave.swbody.json"), project);
-                }
+                if (failure != null) throw failure;
+                project.LastSavedUtc = snapshot.LastSavedUtc;
+                storageSavedRevision = revision;
+                if (storageRevision == revision && !string.IsNullOrWhiteSpace(path)) projectDirty = false;
+                storageLastFailure = string.Empty;
+                progressLabel.Text = UiText.T("最近成功保存：", "Last saved: ") + project.LastSavedUtc.ToLocalTime().ToString("HH:mm:ss") +
+                    (string.IsNullOrWhiteSpace(currentProjectPath) ? UiText.T("（恢复记录）", " (recovery copy)") : string.Empty);
+                UpdateWindowTitle();
             }
-            catch { }
-        }
-
-        private void CopyPreviewsIntoProject(string projectFolder)
-        {
-            if (string.IsNullOrWhiteSpace(projectFolder)) return;
-            string previewRoot = Path.Combine(projectFolder, "Previews");
-            Directory.CreateDirectory(previewRoot);
-            foreach (BodyRecord body in project.AllBodies())
+            catch (Exception ex)
             {
-                string bodyFolder = Path.Combine(previewRoot, NameRules.SafeStem(body.SourceId, "source"));
-                Directory.CreateDirectory(bodyFolder);
-                body.PreviewIso = CopyPreview(body.PreviewIso, Path.Combine(bodyFolder, string.Format("{0:D4}_iso.png", body.Index + 1)));
-                body.PreviewFront = CopyPreview(body.PreviewFront, Path.Combine(bodyFolder, string.Format("{0:D4}_front.png", body.Index + 1)));
-                body.PreviewTop = CopyPreview(body.PreviewTop, Path.Combine(bodyFolder, string.Format("{0:D4}_top.png", body.Index + 1)));
+                projectDirty = true;
+                if (storageLastFailure != ex.Message || DateTime.UtcNow - storageLastFailureNoticeUtc > TimeSpan.FromSeconds(30))
+                {
+                    progressLabel.Text = UiText.T("自动保存失败，修改仍在内存中：", "Autosave failed; edits remain in memory: ") + ex.Message;
+                    storageLastFailure = ex.Message;
+                    storageLastFailureNoticeUtc = DateTime.UtcNow;
+                }
+                UpdateWindowTitle();
             }
-        }
-
-        private static string CopyPreview(string source, string target)
-        {
-            if (string.IsNullOrWhiteSpace(source) || !File.Exists(source)) return source ?? string.Empty;
-            string from = Path.GetFullPath(source);
-            string to = Path.GetFullPath(target);
-            if (!string.Equals(from, to, StringComparison.OrdinalIgnoreCase)) File.Copy(from, to, true);
-            return to;
         }
 
         private void OpenProjectFile(string path)
         {
+            CommitGrid();
             if (projectDirty)
             {
                 DialogResult choice = MessageBox.Show(this,
@@ -594,12 +665,16 @@ namespace SWBodyOrganizer
                     UiText.T("打开项目", "Open project"), MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
                 if (choice == DialogResult.Cancel || (choice == DialogResult.Yes && !SaveProjectInteractive())) return;
             }
-            project = JsonFile.Load<AppProject>(path);
+            project = ProjectStore.Load(path);
+            storageRevision++;
+            storageSavedRevision = storageRevision;
             currentProjectPath = Path.GetFullPath(path);
             projectDirty = false;
             UserSettingsStore.RememberProject(currentProjectPath);
             BindProject();
             UpdateWindowTitle();
+            if (!string.IsNullOrEmpty(ProjectStore.LastLoadWarning))
+                MessageBox.Show(this, ProjectStore.LastLoadWarning, UiText.T("已恢复项目备份", "Project backup recovered"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             CheckProjectSources();
         }
 
@@ -615,14 +690,22 @@ namespace SWBodyOrganizer
                 using (OpenFileDialog dialog = new OpenFileDialog { Filter = "SolidWorks Part (*.SLDPRT)|*.SLDPRT", FileName = source.Name })
                     if (dialog.ShowDialog(this) == DialogResult.OK)
                     {
-                        source.Path = Path.GetFullPath(dialog.FileName);
-                        source.Name = Path.GetFileName(source.Path);
-                        foreach (BodyRecord body in source.Bodies) { body.SourcePath = source.Path; body.SourceName = source.Name; }
-                        MarkProjectDirty();
+                        try
+                        {
+                            bool verified = ProjectStore.RebindSource(source, dialog.FileName);
+                            MarkProjectDirty();
+                            if (!verified) MessageBox.Show(this, source.Message, UiText.T("需要重新读取", "Rescan required"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        }
+                        catch (Exception ex) { MessageBox.Show(this, ex.Message, UiText.T("无法重新绑定", "Cannot relink source"), MessageBoxButtons.OK, MessageBoxIcon.Error); }
                     }
             }
-            List<SourceRecord> changed = project.Sources.Where(source => File.Exists(source.Path) && source.Length > 0 &&
-                (new FileInfo(source.Path).Length != source.Length || new FileInfo(source.Path).LastWriteTimeUtc.Ticks != source.LastWriteTicks)).ToList();
+            List<SourceRecord> changed = new List<SourceRecord>();
+            foreach (SourceRecord source in project.Sources.Where(item => File.Exists(item.Path)))
+            {
+                try { if (string.IsNullOrWhiteSpace(source.ContentSha256) || !string.Equals(ProjectStore.ContentHash(source.Path), source.ContentSha256, StringComparison.OrdinalIgnoreCase)) changed.Add(source); }
+                catch (IOException) { changed.Add(source); }
+                catch (UnauthorizedAccessException) { changed.Add(source); }
+            }
             if (changed.Count > 0)
                 MessageBox.Show(this,
                     string.Format(UiText.T("有 {0} 个源文件自上次读取后发生变化。导出前请点击“重新读取”。", "{0} source file(s) changed since the last scan. Click Rescan before exporting."), changed.Count),
@@ -631,38 +714,48 @@ namespace SWBodyOrganizer
 
         private void CheckRecoveryProject()
         {
-            string recovery = Path.Combine(AppPaths.Recovery, "autosave.swbody.json");
-            if (!File.Exists(recovery) || project.Sources.Count > 0) return;
+            if (project.Sources.Count > 0) return;
             try
             {
-                AppProject saved = JsonFile.Load<AppProject>(recovery);
-                if (saved.Sources == null || saved.Sources.Count == 0) return;
-                if (MessageBox.Show(this,
-                    UiText.T("检测到上次未完成工作的自动恢复记录，是否继续？", "An autosaved unfinished project was found. Resume it?"),
-                    UiText.T("恢复工作", "Resume work"), MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-                project = saved;
-                currentProjectPath = string.Empty;
-                projectDirty = true;
-                BindProject();
-                UpdateWindowTitle();
-                CheckProjectSources();
+                foreach (string recovery in ProjectStore.GetRecoveryFiles())
+                {
+                    AppProject saved;
+                    try { saved = ProjectStore.Load(recovery); }
+                    catch (Exception ex) { progressLabel.Text = UiText.T("恢复记录无法读取：", "Cannot read recovery record: ") + ex.Message; continue; }
+                    if (saved.Sources.Count == 0) continue;
+                    if (MessageBox.Show(this,
+                        UiText.T("检测到未完成工作的恢复记录，是否继续？\n", "Resume this unfinished recovery record?\n") + saved.Name + "\n" + saved.LastSavedUtc.ToLocalTime() + "\n" + recovery,
+                        UiText.T("恢复工作", "Resume work"), MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) continue;
+                    project = saved;
+                    ProjectStore.AdoptRecovery(recovery, project);
+                    storageRevision++;
+                    storageSavedRevision = -1;
+                    currentProjectPath = string.Empty;
+                    projectDirty = true;
+                    BindProject();
+                    UpdateWindowTitle();
+                    CheckProjectSources();
+                    break;
+                }
             }
-            catch { }
+            catch (Exception ex) { progressLabel.Text = UiText.T("恢复检查失败：", "Recovery check failed: ") + ex.Message; }
         }
 
-        private static void DeleteRecoveryFile()
+        private void DeleteRecoveryFile()
         {
-            try
-            {
-                string path = Path.Combine(AppPaths.Recovery, "autosave.swbody.json");
-                if (File.Exists(path)) File.Delete(path);
-            }
-            catch { }
+            try { ProjectStore.DeleteRecovery(project); }
+            catch (Exception ex) { progressLabel.Text = UiText.T("项目已保存，恢复副本暂时保留：", "Project saved; recovery copy retained: ") + ex.Message; }
         }
 
         private void HandleMainFormClosing(object sender, FormClosingEventArgs e)
         {
             if (Program.SuppressStartupPrompts || allowCloseWithoutPrompt) return;
+            if (storageSaving)
+            {
+                e.Cancel = true;
+                progressLabel.Text = UiText.T("正在完成项目安全保存，请稍后再次关闭。", "Finishing the project save. Please close again in a moment.");
+                return;
+            }
             if (worker.IsBusy)
             {
                 e.Cancel = true;
@@ -681,10 +774,10 @@ namespace SWBodyOrganizer
             int classified = project.AllBodies().Count(body => body.CategoryId != CategoryNode.UnclassifiedId);
             string summary = string.Format(UiText.T("当前进度：已分类 {0} / {1}，未分类 {2}。\n最近导出状态：{3}。", "Progress: classified {0} / {1}, unclassified {2}.\nLatest export: {3}."),
                 classified, total, total - classified, project.LastExportSucceeded ? UiText.T("成功", "successful") : UiText.T("未完成或已修改", "incomplete or changed"));
-            if (projectDirty || !project.LastExportSucceeded)
+            if (projectDirty || exportNameEditor.Visible || !project.LastExportSucceeded)
             {
                 DialogResult choice = MessageBox.Show(this,
-                    summary + UiText.T("\n\n工作是否已完成？\n是：保存项目并关闭\n否：不保存并直接关闭\n取消：返回程序", "\n\nIs the work complete?\nYes: save the project and close\nNo: close without saving\nCancel: return to the app"),
+                    summary + UiText.T("\n\n工作是否已完成？\n是：提交当前编辑、保存项目并关闭\n否：不再保存并关闭（保留此前自动保存记录）\n取消：返回程序", "\n\nIs the work complete?\nYes: commit current edits, save and close\nNo: close without another save (earlier autosaves remain)\nCancel: return to the app"),
                     UiText.T("确认关闭", "Confirm close"), MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
                 if (choice == DialogResult.Cancel || (choice == DialogResult.Yes && !SaveProjectInteractive())) { e.Cancel = true; return; }
             }
@@ -708,7 +801,7 @@ namespace SWBodyOrganizer
             MaximizeBox = false;
             MinimizeBox = false;
             ClientSize = new Size(430, 150);
-            Font = new Font("Microsoft YaHei UI", 9F);
+            Font = UiBrand.CreateFont(UiBrand.BaseFontSize);
             Controls.Add(new Label { Text = UiText.T("选择要应用到所选实体的标签 / 文件夹", "Choose the category folder for the selected bodies"), Left = 20, Top = 18, Width = 385, Height = 24 });
             categories.Left = 20; categories.Top = 51; categories.Width = 385; categories.DropDownStyle = ComboBoxStyle.DropDownList;
             categories.DataSource = CategoryRules.BuildOptions(nodes); categories.DisplayMember = "Path"; categories.ValueMember = "Id";
@@ -725,38 +818,44 @@ namespace SWBodyOrganizer
         private readonly IList<BodyRecord> bodies;
         private readonly Func<BodyRecord, List<BodyRecord>> groupProvider;
         private readonly Action changed;
+        private readonly Action beforeChange;
         private readonly Func<IList<BodyRecord>, string> locator;
         private readonly PictureBox iso = CreateView();
         private readonly PictureBox front = CreateView();
         private readonly PictureBox top = CreateView();
-        private readonly TextBox exportName = new TextBox();
+        private readonly ImeSafeNameTextBox exportName = new ImeSafeNameTextBox();
         private readonly ComboBox category = new ComboBox();
         private readonly CheckBox selected = new CheckBox();
         private readonly Label progress = new Label();
+        private readonly ProgressBar classificationProgress = new ProgressBar();
         private readonly Label details = new Label();
         private readonly TextBox output = new TextBox();
         private int index;
         private bool loading;
 
-        public GuidedBodyForm(AppProject project, IList<BodyRecord> bodies, Func<BodyRecord, List<BodyRecord>> groupProvider, Action changed, Func<IList<BodyRecord>, string> locator)
+        public GuidedBodyForm(AppProject project, IList<BodyRecord> bodies, Func<BodyRecord, List<BodyRecord>> groupProvider, Action changed, Func<IList<BodyRecord>, string> locator, Action beforeChange = null, Func<IList<BodyRecord>> toggleDedup = null)
         {
             UiBrand.ApplyIcon(this);
             this.project = project; this.bodies = bodies; this.groupProvider = groupProvider; this.changed = changed; this.locator = locator;
+            this.beforeChange = beforeChange ?? delegate { };
             index = Math.Max(0, Math.Min(bodies.Count - 1, project.GuidedIndex));
             Text = UiText.T("逐项整理", "Guided body organizer");
             StartPosition = FormStartPosition.CenterParent;
             MinimumSize = new Size(940, 650);
             Size = new Size(1240, 820);
-            Font = new Font("Microsoft YaHei UI", 9F);
+            Font = UiBrand.CreateFont(UiBrand.BaseFontSize);
             BackColor = Color.FromArgb(244, 246, 248);
 
             TableLayoutPanel root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(12) };
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 128));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 148));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
             progress.Dock = DockStyle.Fill; progress.Font = new Font(Font, FontStyle.Bold); progress.TextAlign = ContentAlignment.MiddleLeft;
-            root.Controls.Add(progress, 0, 0);
+            Panel summary = new Panel { Dock = DockStyle.Fill, Padding = new Padding(6, 0, 6, 8) };
+            classificationProgress.Dock = DockStyle.Bottom; classificationProgress.Height = 6; classificationProgress.Style = ProgressBarStyle.Continuous;
+            summary.Controls.Add(progress); summary.Controls.Add(classificationProgress);
+            root.Controls.Add(summary, 0, 0);
 
             TableLayoutPanel views = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1 };
             views.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333F)); views.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333F)); views.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.334F));
@@ -766,25 +865,41 @@ namespace SWBodyOrganizer
             root.Controls.Add(views, 0, 1);
 
             TableLayoutPanel editor = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(12), ColumnCount = 4, RowCount = 3 };
-            editor.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90)); editor.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 48)); editor.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90)); editor.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
-            editor.RowStyles.Add(new RowStyle(SizeType.Absolute, 34)); editor.RowStyles.Add(new RowStyle(SizeType.Absolute, 34)); editor.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+            editor.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116)); editor.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 48)); editor.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132)); editor.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
+            editor.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); editor.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); editor.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
             editor.Controls.Add(LabelFor(UiText.T("导出名称", "Export name")), 0, 0); exportName.Dock = DockStyle.Fill; editor.Controls.Add(exportName, 1, 0);
             editor.Controls.Add(LabelFor(UiText.T("标签 / 文件夹", "Category folder")), 2, 0); category.Dock = DockStyle.Fill; category.DropDownStyle = ComboBoxStyle.DropDownList; category.DataSource = CategoryRules.BuildOptions(project.Categories); category.DisplayMember = "Path"; category.ValueMember = "Id"; editor.Controls.Add(category, 3, 0);
             editor.Controls.Add(LabelFor(UiText.T("输出位置", "Output location")), 0, 1); output.Dock = DockStyle.Fill; output.Text = project.OutputRoot; editor.Controls.Add(output, 1, 1); editor.SetColumnSpan(output, 2);
             Button browse = new Button { Text = UiText.T("选择…", "Browse…"), Dock = DockStyle.Fill }; browse.Click += ChooseOutput; editor.Controls.Add(browse, 3, 1);
             selected.Text = UiText.T("选择此零件组用于导出", "Include this part group in export"); selected.Dock = DockStyle.Fill; editor.Controls.Add(selected, 0, 2); editor.SetColumnSpan(selected, 2);
-            details.Dock = DockStyle.Fill; details.ForeColor = Color.FromArgb(90, 96, 106); details.AutoEllipsis = true; editor.Controls.Add(details, 2, 2); editor.SetColumnSpan(details, 2);
+            // The editor fields are a draft. Only an explicit navigation/save action
+            // commits all three values together, avoiding a mixture of live combo-box
+            // events, autosave ticks and stale list rows.
+            details.Dock = DockStyle.Fill; details.ForeColor = Color.FromArgb(58, 64, 73); details.AutoEllipsis = true; editor.Controls.Add(details, 2, 2); editor.SetColumnSpan(details, 2);
             root.Controls.Add(editor, 0, 2);
 
             FlowLayoutPanel buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = new Padding(0, 7, 0, 0) };
             Button close = Make(UiText.T("返回列表", "Back to list"), delegate { Commit(); DialogResult = DialogResult.OK; Close(); });
             Button next = Make(UiText.T("保存并下一个", "Save and next"), delegate { Commit(); MoveIndex(1); });
+            next.BackColor = Color.FromArgb(215, 25, 32); next.ForeColor = Color.White;
             Button previous = Make(UiText.T("上一个", "Previous"), delegate { Commit(); MoveIndex(-1); });
             Button skip = Make(UiText.T("暂不分类", "Skip for now"), delegate { Commit(false); MoveIndex(1); });
             Button locate = Make(UiText.T("在 SW 中定位", "Locate in SW"), Locate);
             buttons.Controls.Add(close); buttons.Controls.Add(next); buttons.Controls.Add(previous); buttons.Controls.Add(skip); buttons.Controls.Add(locate);
             root.Controls.Add(buttons, 0, 3);
             Controls.Add(root);
+            UiBrand.StyleButtons(this);
+            new ShortcutBinding(this, () => true, () => Locate(this, EventArgs.Empty), toggleDedup == null ? (Action)null : delegate
+            {
+                Commit();
+                string currentId = this.bodies[index].Id, geometry = this.bodies[index].GeometryKey;
+                IList<BodyRecord> updated = toggleDedup();
+                this.bodies.Clear(); foreach (BodyRecord body in updated) this.bodies.Add(body);
+                if (this.bodies.Count == 0) { Close(); return; }
+                index = this.bodies.ToList().FindIndex(body => body.Id == currentId);
+                if (index < 0) index = this.bodies.ToList().FindIndex(body => body.GeometryKey == geometry);
+                index = Math.Max(0, index); LoadCurrent();
+            });
             FormClosing += delegate { Commit(); DisposeViews(); project.GuidedIndex = index; };
             LoadCurrent();
         }
@@ -797,6 +912,7 @@ namespace SWBodyOrganizer
             exportName.Text = body.ExportName; category.SelectedValue = body.CategoryId; selected.Checked = body.ExportSelected;
             List<BodyRecord> group = groupProvider(body);
             int classified = bodies.Count(item => item.CategoryId != CategoryNode.UnclassifiedId);
+            classificationProgress.Maximum = Math.Max(1, bodies.Count); classificationProgress.Value = classified;
             progress.Text = string.Format(UiText.T("零件 {0} / {1}    已分类 {2}    未分类 {3}", "Part {0} / {1}    Classified {2}    Unclassified {3}"), index + 1, bodies.Count, classified, bodies.Count - classified);
             details.Text = string.Format(UiText.T("来源：{0} · 原实体：{1} · 相同件：{2}", "Source: {0} · Original: {1} · Identical: {2}"), body.SourceName, body.OriginalName, group.Count);
             loading = false;
@@ -810,7 +926,12 @@ namespace SWBodyOrganizer
             BodyRecord body = bodies[index];
             string name = NameRules.SafeStem(exportName.Text, "Part_" + (body.Index + 1));
             string categoryId = saveCategory ? (Convert.ToString(category.SelectedValue) ?? CategoryNode.UnclassifiedId) : body.CategoryId;
-            foreach (BodyRecord member in groupProvider(body))
+            List<BodyRecord> members = groupProvider(body).ToList();
+            bool modelChanged = members.Any(member => member.ExportName != name || member.CategoryId != categoryId || member.ExportSelected != selected.Checked);
+            bool outputChanged = !string.Equals(project.OutputRoot ?? string.Empty, output.Text.Trim(), StringComparison.Ordinal);
+            if (!modelChanged && !outputChanged) return;
+            beforeChange();
+            foreach (BodyRecord member in members)
             {
                 member.ExportName = name; member.CategoryId = categoryId; member.ExportSelected = selected.Checked;
             }
@@ -836,7 +957,7 @@ namespace SWBodyOrganizer
         private void ChooseOutput(object sender, EventArgs e)
         {
             using (FolderBrowserDialog dialog = new FolderBrowserDialog { Description = UiText.T("选择最终导出文件夹", "Choose the final export folder"), SelectedPath = Directory.Exists(output.Text) ? output.Text : System.Environment.GetFolderPath(System.Environment.SpecialFolder.DesktopDirectory) })
-                if (dialog.ShowDialog(this) == DialogResult.OK) { output.Text = dialog.SelectedPath; project.OutputRoot = output.Text; changed(); }
+                if (dialog.ShowDialog(this) == DialogResult.OK) output.Text = dialog.SelectedPath;
         }
 
         private void DisposeViews()
@@ -865,8 +986,8 @@ namespace SWBodyOrganizer
             if (bodies.Count == 0) { error = UiText.T("没有选中实体。", "No body is selected."); return false; }
             if (bodies.Select(item => item.SourcePath).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 1)
             { error = UiText.T("一次只能在同一个源文件中定位多个实体。", "Multiple highlighted bodies must come from the same source file."); return false; }
-            if (Process.GetProcessesByName("SLDWORKS").Length == 0)
-            { error = UiText.T("SolidWorks 尚未运行。请先在 SolidWorks 中打开该多实体源文件。", "SolidWorks is not running. Open the multi-body source file in SolidWorks first."); return false; }
+            if (Process.GetProcessesByName("SLDWORKS").Length != 1)
+            { error = UiText.T("定位需要恰好一个 SolidWorks 会话，请在该会话中打开多实体源文件。", "Location requires exactly one SolidWorks session with the source part open."); return false; }
 
             ISldWorks app = null;
             IModelDoc2 model = null;
@@ -887,28 +1008,18 @@ namespace SWBodyOrganizer
                 { error = UiText.T("源文件没有在当前 SolidWorks 会话中打开：\n", "The source file is not open in the current SolidWorks session:\n") + bodies[0].SourcePath; return false; }
                 part = model as IPartDoc;
                 if (part == null) { error = UiText.T("当前文档不是 SolidWorks 零件。", "The open document is not a SolidWorks part."); return false; }
-                int activateError = 0;
-                app.ActivateDoc3(model.GetTitle(), false, 0, ref activateError);
                 swBodies = part.GetBodies2((int)swBodyType_e.swSolidBody, false) as object[] ?? new object[0];
+                // Resolve everything before changing the user's current selection.
+                List<IBody2> matches = bodies.Select(body => ResolveForLocation(app, model, swBodies, body)).ToList();
+                int activateError = 0;
+                if (app.ActivateDoc3(model.GetTitle(), false, 0, ref activateError) == null)
+                    throw new InvalidOperationException(UiText.T("无法激活源文件，错误：", "Cannot activate source document; error: ") + activateError);
                 model.ClearSelection2(true);
                 bool append = false;
-                foreach (BodyRecord requestedBody in bodies)
+                foreach (IBody2 match in matches)
                 {
-                    IBody2 match = null;
-                    if (requestedBody.Index >= 0 && requestedBody.Index < swBodies.Length)
-                    {
-                        IBody2 indexed = swBodies[requestedBody.Index] as IBody2;
-                        if (indexed != null && string.Equals(indexed.Name, requestedBody.OriginalName, StringComparison.Ordinal)) match = indexed;
-                    }
-                    if (match == null)
-                    {
-                        List<IBody2> named = swBodies.Select(item => item as IBody2).Where(item => item != null && string.Equals(item.Name, requestedBody.OriginalName, StringComparison.Ordinal)).ToList();
-                        if (named.Count == 1) match = named[0];
-                    }
-                    if (match == null)
-                    { error = string.Format(UiText.T("无法可靠匹配实体“{0}”。源文件可能已经变化，请重新读取。", "Could not reliably match body '{0}'. The source may have changed; rescan it."), requestedBody.OriginalName); return false; }
                     if (!match.Select2(append, null))
-                    { error = string.Format(UiText.T("SolidWorks 未能选择实体“{0}”。", "SolidWorks could not select body '{0}'."), requestedBody.OriginalName); return false; }
+                    { error = string.Format(UiText.T("SolidWorks 未能选择实体“{0}”。", "SolidWorks could not select body '{0}'."), match.Name); return false; }
                     append = true;
                 }
                 model.ViewZoomToSelection();
@@ -918,14 +1029,45 @@ namespace SWBodyOrganizer
             finally
             {
                 if (swBodies != null) foreach (object item in swBodies) Release(item);
-                Release(part); Release(model); Release(app);
+                // part is an interface alias of model, not a separately acquired object.
+                Release(model); Release(app);
             }
+        }
+
+        // Highlighting is a live, visual operation, not permission to export stale geometry.
+        // Never hash, save or reject the document merely for its pending-save flag here.
+        internal static IBody2 ResolveForLocation(ISldWorks app, IModelDoc2 model, object[] bodies, BodyRecord record)
+        {
+            if (!string.IsNullOrWhiteSpace(record.Configuration) &&
+                !string.Equals(ExportIntegrity.Configuration(model), record.Configuration, StringComparison.Ordinal))
+                throw new InvalidDataException(UiText.T("当前配置与读取时不同，请切回原配置或重新读取。", "Active configuration differs; switch back or rescan."));
+            if (!string.IsNullOrWhiteSpace(record.PersistReference))
+            {
+                IModelDocExtension extension = model.Extension;
+                try
+                {
+                    int state;
+                    object resolved = extension.GetObjectByPersistReference3(Convert.FromBase64String(record.PersistReference), out state);
+                    IBody2 match = state != 0 ? null : bodies.OfType<IBody2>().FirstOrDefault(body => app.IsSame(body, resolved) == (int)swObjectEquality.swObjectSame);
+                    if (match != null) return match;
+                }
+                finally { Release(extension); }
+            }
+            List<IBody2> named = bodies.OfType<IBody2>().Where(body => string.Equals(body.Name, record.OriginalName, StringComparison.Ordinal)).ToList();
+            if (named.Count == 1)
+            {
+                bool verified = !string.IsNullOrWhiteSpace(record.GeometryEvidenceKey)
+                    ? ExportIntegrity.EvidenceMatches(named[0], ExportIntegrity.BodyIdentity(record))
+                    : !string.IsNullOrWhiteSpace(record.GeometryKey) && string.Equals(WorkerMain.BuildGeometryKey(named[0]), record.GeometryKey, StringComparison.Ordinal);
+                if (verified) return named[0];
+            }
+            throw new InvalidDataException(string.Format(UiText.T("无法可靠匹配实体“{0}”，请重新读取。", "Cannot reliably identify body '{0}'; rescan."), record.OriginalName));
         }
 
         private static void Release(object value)
         {
             if (value == null || !Marshal.IsComObject(value)) return;
-            try { Marshal.FinalReleaseComObject(value); } catch { }
+            try { Marshal.ReleaseComObject(value); } catch { }
         }
     }
 }
