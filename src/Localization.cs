@@ -66,7 +66,7 @@ namespace SWBodyOrganizer
 
     internal static class UiBrand
     {
-        public const string VersionCaption = "V1.2.6 · 0905-R4";
+        public const string VersionCaption = "V1.2.6 · 0922-R5";
         public const string FontFamily = "Microsoft YaHei UI";
         public const float BaseFontSize = 10.5F;
         public const float SecondaryFontSize = 9.75F;

@@ -1,0 +1,76 @@
+name: Publish verified R5 package
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-r5.yml
+      - releases/v1.2.6-0922-R5/**
+      - RELEASE_NOTES_R5.md
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: publish-r5
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_REPO: ${{ github.repository }}
+      RELEASE_COMMIT: ${{ github.sha }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Fetch exact commit and verify the locally tested package
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          Invoke-WebRequest "https://api.github.com/repos/$env:RELEASE_REPO/zipball/$env:RELEASE_COMMIT" -Headers $headers -OutFile source.zip
+          Expand-Archive source.zip source
+          $root = (Get-ChildItem source -Directory | Select-Object -First 1).FullName
+          "RELEASE_SOURCE=$root" | Out-File $env:GITHUB_ENV -Append
+          $zip = Join-Path $root 'releases/v1.2.6-0922-R5/MasterMiao-v1.2.6-0922-R5.zip'
+          if ((Get-FileHash $zip).Hash -ne 'E92EED252D7A5086E2B021424B13DBF65AE9049ED44AB5EAA9B1DDCAF6B07F00') { throw 'Verified package SHA-256 mismatch' }
+          Expand-Archive $zip package
+          $package = (Get-ChildItem package -Directory | Select-Object -First 1).FullName
+          foreach ($line in Get-Content (Join-Path $package 'SHA256SUMS.txt')) {
+            if ($line -notmatch '^([a-fA-F0-9]{64})  (.+)$') { throw 'Invalid manifest line' }
+            $expected = $Matches[1]
+            $file = Join-Path $package $Matches[2]
+            if ((Get-FileHash -LiteralPath $file).Hash -ne $expected) { throw "Package file mismatch: $file" }
+          }
+          if ((Get-Item (Join-Path $package 'MasterMiao.exe')).VersionInfo.FileVersion -ne '1.2.6.5') { throw 'Wrong file version' }
+          if ((Get-FileHash (Join-Path $package 'MasterMiao.exe')).Hash -ne 'CB0F6CC5778B73CF94865A1F3706F56559C2890C87C9EE2F7801FB59C7E7DB63') { throw 'Wrong tested executable' }
+          foreach ($folder in @('src','macro')) {
+            Get-ChildItem (Join-Path $package "Source/$folder") -File | ForEach-Object {
+              $packagedText = (Get-Content $_.FullName -Raw).Replace("`r`n", "`n")
+              $repositoryText = (Get-Content (Join-Path $root "$folder/$($_.Name)") -Raw).Replace("`r`n", "`n")
+              if ($packagedText -cne $repositoryText) { throw "Package/repository source mismatch: $($_.Name)" }
+            }
+          }
+          'Package hash, file manifest, version and source alignment verified. CAD acceptance was performed locally; CI does not run SolidWorks.' | Out-File $env:GITHUB_STEP_SUMMARY -Append
+      - name: Publish R5 release and original verified assets
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $base = "https://api.github.com/repos/$env:RELEASE_REPO/releases"
+          $tag = 'v1.2.6-0922-R5'
+          $existing = @(Invoke-RestMethod "$base`?per_page=100" -Headers $headers) | Where-Object tag_name -eq $tag
+          if ($existing) { throw 'R5 release already exists; refusing to overwrite it.' }
+          $notes = Get-Content (Join-Path $env:RELEASE_SOURCE 'RELEASE_NOTES_R5.md') -Raw
+          $payload = @{ tag_name=$tag; target_commitish=$env:RELEASE_COMMIT; name='MasterMiao v1.2.6 · 0922-R5'; body=$notes; draft=$true; prerelease=$false } | ConvertTo-Json
+          $release = Invoke-RestMethod $base -Method Post -Headers $headers -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($payload))
+          $assetRoot = Join-Path $env:RELEASE_SOURCE 'releases/v1.2.6-0922-R5'
+          foreach ($filename in @('MasterMiao-v1.2.6-0922-R5.zip','MasterMiao-v1.2.6-0922-R5.zip.sha256')) {
+            $asset = Join-Path $assetRoot $filename
+            $url = "https://uploads.github.com/repos/$env:RELEASE_REPO/releases/$($release.id)/assets?name=$([Uri]::EscapeDataString($filename))"
+            $uploaded = Invoke-RestMethod $url -Method Post -Headers $headers -ContentType 'application/octet-stream' -InFile $asset
+            if ($uploaded.size -ne (Get-Item $asset).Length -or $uploaded.state -ne 'uploaded') { throw 'Incomplete asset upload' }
+          }
+          $published = Invoke-RestMethod "$base/$($release.id)" -Method Patch -Headers $headers -ContentType 'application/json' -Body '{"draft":false,"prerelease":false,"make_latest":"true"}'
+          $published.html_url | Out-File $env:GITHUB_STEP_SUMMARY -Append

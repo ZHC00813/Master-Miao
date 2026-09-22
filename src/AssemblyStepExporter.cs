@@ -92,7 +92,7 @@ namespace SWBodyOrganizer
             {
                 if (!activeProcesses.Any(item => item.Id == session.ProcessId))
                     throw new SolidWorksInterferenceException((session.WasRunning ? "用户原有的" : "程序启动的") + " SolidWorks 会话在 STEP 导出前已经关闭或发生变化，本次任务已停止。");
-                if (activeProcesses.Any(item => item.Id != session.ProcessId))
+                if (!session.OwnsApplication && request.AuthorizedSolidWorksProcessId != session.ProcessId && activeProcesses.Any(item => item.Id != session.ProcessId))
                     throw new SolidWorksInterferenceException("STEP 导出前检测到另一个 SolidWorks 窗口。为避免连接到错误会话，本次任务已停止。");
             }
             finally
@@ -200,6 +200,7 @@ namespace SWBodyOrganizer
 
             foreach (ExportResultItem part in job.Parts)
             {
+                WorkerMain.Emit("PROGRESS", 97, "校验 STEP", part.ExportName);
                 if (part.StepStatus.StartsWith("跳过", StringComparison.Ordinal) && File.Exists(part.StepPath)) continue;
                 string stagePart = Path.Combine(job.StageFolder, Path.GetFileNameWithoutExtension(part.SldprtPath) + ".STEP");
                 if (!IsValidStep(stagePart))

@@ -35,3 +35,6 @@ project.swbody.json
 *.bak
 Thumbs.db
 .DS_Store
+
+# Exact locally verified R5 distribution, intentionally published
+!/releases/v1.2.6-0922-R5/MasterMiao-v1.2.6-0922-R5.zip

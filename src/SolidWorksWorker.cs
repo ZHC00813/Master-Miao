@@ -73,6 +73,7 @@ namespace SWBodyOrganizer
                 }
                 else if (string.Equals(request.Operation, "scan", StringComparison.OrdinalIgnoreCase))
                 {
+                    if (request.SaveSourcesBeforeScan) SourceDocuments.SaveSources(app, request.Sources);
                     Scan(app, request, response);
                     if (ShouldKeepScanSession(request, response))
                     {
@@ -146,7 +147,7 @@ namespace SWBodyOrganizer
                 IModelDoc2 model = null;
                 try
                 {
-                    model = app.GetOpenDocumentByName(source.Path) as IModelDoc2;
+                    model = SourceDocuments.FindOpen(app, source.Path);
                     if (model == null) throw new InvalidOperationException("读取完成后未能在 SolidWorks 中保留源文件：" + source.Path);
                     retained++;
                 }
@@ -235,7 +236,7 @@ namespace SWBodyOrganizer
             ISldWorks app = null;
             try
             {
-                if (existingProcessIds.Count > 1)
+                if (existingProcessIds.Count > 1 && request.AuthorizedSolidWorksProcessId <= 0)
                     throw new InvalidOperationException("检测到多个 SolidWorks 进程。为避免连接到错误窗口，请只保留需要复用的一个 SolidWorks 会话后重试。");
                 object value;
                 bool authorizedLaunch = request.AuthorizedSolidWorksProcessId > 0 && !WasHandedOff(request);
@@ -245,7 +246,7 @@ namespace SWBodyOrganizer
                     session.ProcessStartTimeUtcTicks = request.AuthorizedSolidWorksStartTimeUtcTicks;
                     session.OwnsApplication = true;
                     session.WasRunning = false;
-                    if (!existingProcessIds.SetEquals(new[] { session.ProcessId }))
+                    if (!existingProcessIds.Contains(session.ProcessId))
                         throw new InvalidOperationException("用户授权启动的 SolidWorks 进程与当前检测结果不一致，本次任务已停止。");
                     using (Process process = Process.GetProcessById(session.ProcessId))
                         if (process.StartTime.ToUniversalTime().Ticks != session.ProcessStartTimeUtcTicks)
@@ -253,10 +254,12 @@ namespace SWBodyOrganizer
                     Emit("PROGRESS", 1, "启动", "正在连接用户已授权打开的 SolidWorks 界面");
                     value = WaitForActiveSolidWorks(session.ProcessId, request.CancelFile);
                 }
-                else if (existingProcessIds.Count == 1)
+                else if (existingProcessIds.Count >= 1)
                 {
                     Emit("PROGRESS", 1, "连接", "正在连接用户已打开的 SolidWorks 会话");
-                    value = WaitForActiveSolidWorks(existingProcessIds.Single(), request.CancelFile);
+                    int selectedProcess = request.AuthorizedSolidWorksProcessId > 0 && existingProcessIds.Contains(request.AuthorizedSolidWorksProcessId)
+                        ? request.AuthorizedSolidWorksProcessId : existingProcessIds.Single();
+                    value = WaitForActiveSolidWorks(selectedProcess, request.CancelFile);
                     session.WasRunning = true;
                 }
                 else
@@ -310,6 +313,38 @@ namespace SWBodyOrganizer
             }
         }
 
+        [DllImport("ole32.dll")] private static extern int GetRunningObjectTable(int reserved, out System.Runtime.InteropServices.ComTypes.IRunningObjectTable table);
+
+        private static ISldWorks FindSolidWorksProcess(int processId)
+        {
+            ISldWorks active = null;
+            try { active = Marshal.GetActiveObject("SldWorks.Application") as ISldWorks; if (active != null && active.GetProcessID() == processId) return active; }
+            catch { }
+            Release(active);
+            System.Runtime.InteropServices.ComTypes.IRunningObjectTable table = null;
+            System.Runtime.InteropServices.ComTypes.IEnumMoniker entries = null;
+            try
+            {
+                Marshal.ThrowExceptionForHR(GetRunningObjectTable(0, out table));
+                table.EnumRunning(out entries);
+                var next = new System.Runtime.InteropServices.ComTypes.IMoniker[1];
+                while (entries.Next(1, next, IntPtr.Zero) == 0)
+                {
+                    object value = null;
+                    try
+                    {
+                        table.GetObject(next[0], out value);
+                        ISldWorks candidate = value as ISldWorks;
+                        if (candidate != null && candidate.GetProcessID() == processId) { value = null; return candidate; }
+                    }
+                    catch { }
+                    finally { Release(value); Release(next[0]); }
+                }
+                return null;
+            }
+            finally { Release(entries); Release(table); }
+        }
+
         private static object WaitForActiveSolidWorks(int expectedProcessId, string cancelFile)
         {
             Exception lastError = null;
@@ -320,7 +355,7 @@ namespace SWBodyOrganizer
                 ISldWorks candidate = null;
                 try
                 {
-                    candidate = Marshal.GetActiveObject("SldWorks.Application") as ISldWorks;
+                    candidate = FindSolidWorksProcess(expectedProcessId);
                     if (candidate != null && candidate.GetProcessID() == expectedProcessId) return candidate;
                 }
                 catch (Exception ex) { lastError = ex; }
@@ -367,7 +402,7 @@ namespace SWBodyOrganizer
                 if (!string.IsNullOrWhiteSpace(title))
                 {
                     int errors = 0;
-                    app.ActivateDoc3(title, false, 0, ref errors);
+                    app.ActivateDoc3(title, false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, ref errors);
                 }
                 Release(original);
             }
@@ -404,7 +439,7 @@ namespace SWBodyOrganizer
             catch { }
         }
 
-        private static string FindPartTemplate(ISldWorks app)
+        internal static string FindPartTemplate(ISldWorks app)
         {
             string template = string.Empty;
             try { template = app.GetUserPreferenceStringValue((int)swUserPreferenceStringValue_e.swDefaultTemplatePart); } catch { }
@@ -418,7 +453,7 @@ namespace SWBodyOrganizer
             return known.FirstOrDefault(File.Exists) ?? string.Empty;
         }
 
-        private static string FindAssemblyTemplate(ISldWorks app)
+        internal static string FindAssemblyTemplate(ISldWorks app)
         {
             string template = string.Empty;
             try { template = app.GetUserPreferenceStringValue((int)swUserPreferenceStringValue_e.swDefaultTemplateAssembly); } catch { }
@@ -472,10 +507,10 @@ namespace SWBodyOrganizer
                     int openErrors = 0, openWarnings = 0;
                     int options = (int)swOpenDocOptions_e.swOpenDocOptions_Silent | (int)swOpenDocOptions_e.swOpenDocOptions_ReadOnly;
                     Emit("PROGRESS", Percent(fileIndex, request.Sources.Count, 5), "读取文件", source.Name);
-                    model = app.GetOpenDocumentByName(source.Path) as IModelDoc2;
+                    model = SourceDocuments.FindOpen(app, source.Path);
                     wasAlreadyOpen = model != null;
                     if (model == null) model = app.OpenDoc6(source.Path, (int)swDocumentTypes_e.swDocPART, options, string.Empty, ref openErrors, ref openWarnings);
-                    if (model == null) throw new InvalidOperationException(string.Format("无法打开文件，错误={0}，警告={1}。", openErrors, openWarnings));
+                    if (model == null) throw new InvalidOperationException(SourceDocuments.OpenError(source.Path, openErrors, openWarnings));
                     title = model.GetTitle();
                     try { hasUnsavedState = model.GetSaveFlag(); } catch { }
                     source.Configuration = ExportIntegrity.Configuration(model);
@@ -533,9 +568,34 @@ namespace SWBodyOrganizer
                         finally { Release(body); }
                     }
                     ExportIntegrity.VerifySourceFile(source.Path, source.ContentSha256);
+                    if (request.SaveSourcesBeforeScan && model.GetSaveFlag())
+                    {
+                        // Reading references and generating previews can finish a
+                        // deferred rebuild. Complete the explicitly requested save
+                        // after that work, then bind the scan to the saved bytes.
+                        int saveErrors = 0, saveWarnings = 0;
+                        SourceDocuments.EnsureWritable(model);
+                        if (!model.Save3(1, ref saveErrors, ref saveWarnings) || saveErrors != 0 || model.GetSaveFlag())
+                            throw new IOException("读取后的源零件保存失败，错误=" + saveErrors + "，警告=" + saveWarnings);
+                        object[] savedBodies = part.GetBodies2((int)swBodyType_e.swSolidBody, false) as object[] ?? new object[0];
+                        try
+                        {
+                            if (savedBodies.Length != source.Bodies.Count || source.Bodies.Any(record =>
+                                savedBodies.OfType<IBody2>().Count(savedBody => savedBody.Name == record.OriginalName &&
+                                    ExportIntegrity.EvidenceMatches(savedBody, ExportIntegrity.BodyIdentity(record))) != 1))
+                                throw new IOException("保存重建改变了实体，请重新读取；原命名已备份。 / Saving rebuilt the geometry; rescan.");
+                            ExportIntegrity.VerifyMemory(model, source.Configuration);
+                        }
+                        finally { foreach (object savedBody in savedBodies) Release(savedBody); }
+                        source.ContentSha256 = ExportIntegrity.FileHash(source.Path);
+                        FileInfo savedInfo = new FileInfo(source.Path);
+                        source.Length = savedInfo.Length; source.LastWriteTicks = savedInfo.LastWriteTimeUtc.Ticks;
+                        foreach (BodyRecord record in source.Bodies) record.SourceSha256 = source.ContentSha256;
+                    }
+                    hasUnsavedState = model.GetSaveFlag();
                     source.Status = "读取完成";
                     source.Message = (openWarnings == 0 ? string.Empty : "SolidWorks 打开警告：" + openWarnings) +
-                        (hasUnsavedState ? (openWarnings == 0 ? string.Empty : "；") + "检测到未保存或自动重建状态：可以继续查看和分类，正式导出前请保存源文件并重新读取。" : string.Empty);
+                        (hasUnsavedState ? (openWarnings == 0 ? string.Empty : "；") + "检测到未保存或自动重建状态。可继续分类；导出前点击“保存源文件并重读”。若另存到新位置，点击“重新关联”，保留命名和分类。" : string.Empty);
                 }
                 catch (Exception fileError)
                 {
@@ -589,7 +649,7 @@ namespace SWBodyOrganizer
                 if (feature == null) throw new InvalidOperationException("无法在预览零件中建立实体。");
                 target.ForceRebuild3(false);
                 int activateErrors = 0;
-                app.ActivateDoc3(targetTitle, false, 0, ref activateErrors);
+                app.ActivateDoc3(targetTitle, false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, ref activateErrors);
                 EnsureActiveDocument(app, targetTitle, "生成实体预览");
                 SaveViewPng(target, (int)swStandardViews_e.swFrontView, front);
                 EnsureActiveDocument(app, targetTitle, "生成实体预览");
@@ -610,7 +670,7 @@ namespace SWBodyOrganizer
                 if (sourceModel != null)
                 {
                     int activateErrors = 0;
-                    try { app.ActivateDoc3(sourceModel.GetTitle(), false, 0, ref activateErrors); } catch { }
+                    try { app.ActivateDoc3(sourceModel.GetTitle(), false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, ref activateErrors); } catch { }
                 }
             }
         }
@@ -707,10 +767,10 @@ namespace SWBodyOrganizer
                     ExportIntegrity.VerifySourceFile(sourceGroup.Key, sourceHash);
                     int openErrors = 0, openWarnings = 0;
                     int openOptions = (int)swOpenDocOptions_e.swOpenDocOptions_Silent | (int)swOpenDocOptions_e.swOpenDocOptions_ReadOnly;
-                    sourceModel = app.GetOpenDocumentByName(sourceGroup.Key) as IModelDoc2;
+                    sourceModel = SourceDocuments.FindOpen(app, sourceGroup.Key);
                     sourceWasAlreadyOpen = sourceModel != null;
                     if (sourceModel == null) sourceModel = app.OpenDoc6(sourceGroup.Key, (int)swDocumentTypes_e.swDocPART, openOptions, configuration, ref openErrors, ref openWarnings);
-                    if (sourceModel == null) throw new InvalidOperationException("无法重新打开源文件：" + sourceGroup.Key);
+                    if (sourceModel == null) throw new InvalidOperationException(SourceDocuments.OpenError(sourceGroup.Key, openErrors, openWarnings));
                     VerifyOpenedSource(sourceModel, configuration, sourceWasAlreadyOpen);
                     ExportIntegrity.VerifySourceFile(sourceGroup.Key, sourceHash);
                     sourceTitle = sourceModel.GetTitle();
@@ -956,7 +1016,7 @@ namespace SWBodyOrganizer
                     if (feature == null) throw new InvalidOperationException("无法在新零件中建立实体。");
                     target.ForceRebuild3(false);
                     int activateErrors = 0;
-                    app.ActivateDoc3(targetTitle, false, 0, ref activateErrors);
+                    app.ActivateDoc3(targetTitle, false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, ref activateErrors);
                     EnsureActiveDocument(app, targetTitle, "保存拆分零件");
                     extension = target.Extension;
                     int errors = 0, warnings = 0;
@@ -1058,7 +1118,7 @@ namespace SWBodyOrganizer
                 model.ClearSelection2(true);
                 model.ForceRebuild3(false);
                 int activateErrors = 0;
-                app.ActivateDoc3(title, false, 0, ref activateErrors);
+                app.ActivateDoc3(title, false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, ref activateErrors);
                 EnsureActiveDocument(app, title, "保存原位装配体");
                 extension = model.Extension;
                 int errors = 0, warnings = 0;
@@ -1133,7 +1193,7 @@ namespace SWBodyOrganizer
                 if (model == null) throw new InvalidOperationException(string.Format("装配体无法重新打开验证，错误={0}，警告={1}。", errors, warnings));
                 title = model.GetTitle();
                 int activateErrors = 0;
-                app.ActivateDoc3(title, false, 0, ref activateErrors);
+                app.ActivateDoc3(title, false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, ref activateErrors);
                 EnsureActiveDocument(app, title, "验证原位装配体");
                 assembly = (IAssemblyDoc)model;
                 components = assembly.GetComponents(false) as object[] ?? new object[0];
@@ -1185,7 +1245,7 @@ namespace SWBodyOrganizer
                 if (model == null) throw new InvalidOperationException("导出文件无法重新打开。");
                 title = model.GetTitle();
                 int activateErrors = 0;
-                app.ActivateDoc3(title, false, 0, ref activateErrors);
+                app.ActivateDoc3(title, false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, ref activateErrors);
                 EnsureActiveDocument(app, title, "验证拆分零件");
                 part = (IPartDoc)model;
                 bodies = part.GetBodies2((int)swBodyType_e.swSolidBody, false) as object[];
@@ -1412,3 +1472,4 @@ namespace SWBodyOrganizer
         }
     }
 }
+

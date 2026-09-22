@@ -12,8 +12,8 @@ using System.Windows.Forms;
 [assembly: AssemblyCompany("Master Miao")]
 [assembly: AssemblyProduct("Master Miao")]
 [assembly: AssemblyVersion("1.2.6.0")]
-[assembly: AssemblyFileVersion("1.2.6.4")]
-[assembly: AssemblyInformationalVersion("1.2.6-0905-R4")]
+[assembly: AssemblyFileVersion("1.2.6.5")]
+[assembly: AssemblyInformationalVersion("1.2.6-0922-R5")]
 [assembly: ComVisible(false)]
 
 namespace SWBodyOrganizer

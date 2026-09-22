@@ -7,6 +7,8 @@ using System.Runtime.InteropServices;
 using System.Text;
 using SolidWorks.Interop.sldworks;
 
+[assembly: System.Reflection.AssemblyVersion("1.2.6.6")]
+
 namespace SWBodyOrganizerStepMacro
 {
     [Guid("7C850B7A-43F4-4F8E-8644-D18E28D28471")]
@@ -72,6 +74,7 @@ namespace SWBodyOrganizerStepMacro
             ModelDoc2 model = null;
             string title = string.Empty;
             bool alreadyOpen = false;
+            string stage = "open";
             try
             {
                 int openErrors = 0, openWarnings = 0;
@@ -80,6 +83,7 @@ namespace SWBodyOrganizerStepMacro
                 if (model == null) model = swApp.OpenDoc6(assemblyPath, 2, 3, string.Empty, ref openErrors, ref openWarnings) as ModelDoc2;
                 if (model == null) return "OPEN_FAILED|" + openErrors.ToString(CultureInfo.InvariantCulture) + "|" + openWarnings.ToString(CultureInfo.InvariantCulture);
                 if (model.GetSaveFlag()) return "INTERFERENCE|UNSAVED_ASSEMBLY|0";
+                stage = "activate";
                 title = model.GetTitle();
                 int activateErrors = 0;
                 swApp.ActivateDoc3(title, false, 0, ref activateErrors);
@@ -88,7 +92,18 @@ namespace SWBodyOrganizerStepMacro
                 if (!string.Equals(active.GetTitle(), title, StringComparison.OrdinalIgnoreCase)) return "INTERFERENCE|ACTIVE_DOCUMENT_CHANGED|0";
                 model.ClearSelection2(true);
                 int saveErrors = 0, saveWarnings = 0;
+                stage = "split STEP save";
                 bool saved = model.Extension.SaveAs(outputPath, 0, 1, null, ref saveErrors, ref saveWarnings);
+                if (saved && File.Exists(outputPath))
+                {
+                    stage = "self-contained STEP save";
+                    // Keep the individual STEP files from atomic export, but make
+                    // the master self-contained. External-reference master STEP
+                    // files can stall SW 2024 LoadFile4 while resolving children.
+                    swApp.SetUserPreferenceToggle(786, false);
+                    try { saved = model.Extension.SaveAs(outputPath, 0, 1, null, ref saveErrors, ref saveWarnings); }
+                    finally { swApp.SetUserPreferenceToggle(786, true); }
+                }
                 active = swApp.ActiveDoc as ModelDoc2;
                 if (active == null) return "INTERFERENCE|NO_ACTIVE_DOCUMENT_AFTER_SAVE|0";
                 if (!string.Equals(active.GetTitle(), title, StringComparison.OrdinalIgnoreCase)) return "INTERFERENCE|ACTIVE_DOCUMENT_CHANGED_AFTER_SAVE|0";
@@ -96,7 +111,7 @@ namespace SWBodyOrganizerStepMacro
             }
             catch (Exception ex)
             {
-                return "ERROR|" + ex.HResult.ToString(CultureInfo.InvariantCulture) + "|" + Clean(ex.Message);
+                return "ERROR|" + ex.HResult.ToString(CultureInfo.InvariantCulture) + "|" + stage + ": " + Clean(ex.Message);
             }
             finally
             {

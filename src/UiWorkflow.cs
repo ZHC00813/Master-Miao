@@ -273,14 +273,34 @@ namespace SWBodyOrganizer
         internal static void RestoreScanEdits(SourceRecord previous, SourceRecord scanned, IList<CategoryNode> categories)
         {
             if (previous == null || scanned == null) return;
-            Dictionary<int, BodyRecord> previousBodies = (previous.Bodies ?? new List<BodyRecord>())
-                .GroupBy(body => body.Index).ToDictionary(group => group.Key, group => group.First());
+            List<BodyRecord> previousBodies = previous.Bodies ?? new List<BodyRecord>();
+            List<BodyRecord> newBodies = scanned.Bodies ?? new List<BodyRecord>();
+            HashSet<string> used = new HashSet<string>();
+            int restored = 0;
             HashSet<string> categoryIds = new HashSet<string>((categories ?? new List<CategoryNode>()).Select(category => category.Id));
             foreach (BodyRecord body in scanned.Bodies ?? new List<BodyRecord>())
             {
-                BodyRecord old;
-                if (!previousBodies.TryGetValue(body.Index, out old) ||
-                    (!string.IsNullOrWhiteSpace(old.GeometryKey) && !string.Equals(old.GeometryKey, body.GeometryKey, StringComparison.Ordinal))) continue;
+                Func<BodyRecord, bool> compatible = candidate =>
+                    string.Equals(candidate.Configuration, body.Configuration, StringComparison.Ordinal) &&
+                    ((!string.IsNullOrWhiteSpace(candidate.GeometryEvidenceKey) && candidate.GeometryEvidenceKey == body.GeometryEvidenceKey) ||
+                     (string.IsNullOrWhiteSpace(candidate.GeometryEvidenceKey) && !string.IsNullOrWhiteSpace(candidate.GeometryKey) && candidate.GeometryKey == body.GeometryKey));
+                List<BodyRecord> matches = previousBodies.Where(candidate => compatible(candidate) &&
+                    !string.IsNullOrWhiteSpace(body.PersistReference) && candidate.PersistReference == body.PersistReference).ToList();
+                bool uniqueNew = newBodies.Count(candidate => candidate.Configuration == body.Configuration && candidate.PersistReference == body.PersistReference) == 1;
+                if (matches.Count != 1 || !uniqueNew)
+                {
+                    matches = previousBodies.Where(candidate => compatible(candidate) && !string.IsNullOrWhiteSpace(body.OriginalName) && candidate.OriginalName == body.OriginalName).ToList();
+                    uniqueNew = newBodies.Count(candidate => candidate.Configuration == body.Configuration && candidate.OriginalName == body.OriginalName) == 1;
+                }
+                // Legacy records without names/references retain the old index+fingerprint path.
+                if (matches.Count == 0 && string.IsNullOrWhiteSpace(body.OriginalName) && string.IsNullOrWhiteSpace(body.PersistReference))
+                {
+                    matches = previousBodies.Where(candidate => candidate.Index == body.Index && compatible(candidate) && string.IsNullOrWhiteSpace(candidate.OriginalName) && string.IsNullOrWhiteSpace(candidate.PersistReference)).ToList();
+                    uniqueNew = newBodies.Count(candidate => candidate.Index == body.Index) == 1;
+                }
+                if (matches.Count != 1 || !uniqueNew || !used.Add(matches[0].Id)) continue;
+                BodyRecord old = matches[0];
+                restored++;
                 body.Id = old.Id;
                 body.ExportName = old.ExportName;
                 body.CategoryId = categoryIds.Contains(old.CategoryId)
@@ -292,6 +312,8 @@ namespace SWBodyOrganizer
                     body.CandidateSuppressed = old.CandidateSuppressed;
                 }
             }
+            if (previousBodies.Count > 0)
+                scanned.Message = (scanned.Message ?? string.Empty) + string.Format(UiText.T(" 已恢复 {0}/{1} 个实体的命名、分类和勾选；未匹配实体请检查。", " Restored names, categories and selection for {0}/{1} bodies; review unmatched bodies."), restored, newBodies.Count);
         }
 
         private void ExportOptionsChanged(object sender, EventArgs e)

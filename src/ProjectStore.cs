@@ -228,6 +228,24 @@ namespace SWBodyOrganizer
             return verified;
         }
 
+        // Relinking a saved/revised file retains edits, but never authorizes export
+        // until a fresh scan has established the new file and body identities.
+        public static void PrepareSourceRelink(SourceRecord source, string newPath)
+        {
+            newPath = Path.GetFullPath(newPath);
+            if (!File.Exists(newPath) || !string.Equals(Path.GetExtension(newPath), ".SLDPRT", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("请选择存在的 SLDPRT 零件文件。 / Select an existing SLDPRT file.");
+            source.Path = newPath;
+            source.Name = Path.GetFileName(newPath);
+            source.Status = "需要重新读取";
+            source.Message = "路径已更新，命名和分类已保留；重新读取后才能导出。 / Relinked; edits retained, rescan required before export.";
+            foreach (BodyRecord body in source.Bodies)
+            {
+                body.SourcePath = newPath; body.SourceName = source.Name;
+                body.Status = "需要重新读取"; body.Message = source.Message;
+            }
+        }
+
         public static bool IsInside(string directory, string file)
         {
             return Path.GetFullPath(file).StartsWith(Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);

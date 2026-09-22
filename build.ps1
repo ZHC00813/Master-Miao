@@ -1,11 +1,12 @@
 param(
-    [string]$SolidWorksApiPath = $env:MASTER_MIAO_SW_API
+    [string]$SolidWorksApiPath = $env:MASTER_MIAO_SW_API,
+    [string]$OutputDirectory = 'build'
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $compiler = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $swApi = if ([string]::IsNullOrWhiteSpace($SolidWorksApiPath)) { 'C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\api\redist' } else { [IO.Path]::GetFullPath($SolidWorksApiPath) }
-$output = Join-Path $projectRoot 'build'
+$output = Join-Path $projectRoot $OutputDirectory
 $macroSource = Join-Path $projectRoot 'macro\StepMacro.cs'
 $iconSource = Join-Path $projectRoot 'assets\MasterMiao-logo.png'
 $iconOutput = Join-Path $output 'MasterMiao.ico'

@@ -58,7 +58,7 @@ namespace SWBodyOrganizer
 
         internal static void VerifyMemory(IModelDoc2 model, string configuration)
         {
-            if (model.GetSaveFlag()) throw new InvalidDataException("源文件存在未保存修改；请自行保存或放弃修改后重新读取。 / Source has unsaved changes; save or discard them and rescan.");
+            if (model.GetSaveFlag()) throw new InvalidDataException("源文件存在未保存修改：" + model.GetPathName() + "。请使用“保存源文件并重读”，命名和分类会按实体身份恢复；若已另存，请使用“重新关联”，不要移除后重新添加。 / Source has unsaved changes; save and rescan, or relink after Save As. Existing edits are preserved by body identity.");
             if (!string.IsNullOrWhiteSpace(configuration) && !string.Equals(Configuration(model), configuration, StringComparison.Ordinal))
                 throw new InvalidDataException("当前 SolidWorks 配置与读取记录不一致，请重新读取。 / Active configuration differs from the scan; rescan.");
         }
@@ -218,16 +218,36 @@ namespace SWBodyOrganizer
         internal static void VerifyGeometry(IBody2 expected, IBody2 actual)
         {
             double[] left = expected.GetMassProperties(1.0) as double[], right = actual.GetMassProperties(1.0) as double[];
-            if (left == null || right == null || left.Length < 5 || right.Length < 5 ||
-                !Close(left[3], right[3], 1e-12) || !Close(left[4], right[4], 1e-10) || !BoundsMatch(Bounds(expected), Bounds(actual)))
+            if (left == null || right == null || left.Length < 5 || right.Length < 5 || !BoundsMatch(Bounds(expected), Bounds(actual)))
                 throw new InvalidDataException("重新打开的实体体积、面积或位置尺度不一致。 / Reopened body volume, area or position/scale differs.");
+            bool massMatches = Close(left[3], right[3], 1e-12) && Close(left[4], right[4], 1e-10);
             MathTransform transform = null;
             try
             {
-                if (!expected.GetCoincidenceTransform2(actual, out transform) || transform == null || !IdentityTransform(transform.ArrayData as double[]))
+                if ((!massMatches || !expected.GetCoincidenceTransform2(actual, out transform) || transform == null || !IdentityTransform(transform.ArrayData as double[])) &&
+                    !(EmptyDifference(expected, actual) && EmptyDifference(actual, expected)))
                     throw new InvalidDataException("重新打开的实体未通过原位几何重合检查（不接受旋转、平移、镜像或缩放）。 / Reopened solid fails in-place congruence (changed rotation/translation/reflection/scale is rejected).");
             }
             finally { Release(transform); }
+        }
+
+        private static bool EmptyDifference(IBody2 left, IBody2 right)
+        {
+            // Symmetric solids may yield a non-identity coincidence transform even
+            // when already coincident. Require two successful EMPTY differences in
+            // the original coordinates; never transform either solid to make it fit.
+            IBody2 target = null, tool = null;
+            object[] remainder = null;
+            try
+            {
+                target = left.Copy() as IBody2; tool = right.Copy() as IBody2;
+                if (target == null || tool == null) return false;
+                int error;
+                remainder = target.Operations2((int)swBodyOperationType_e.SWBODYCUT, tool, out error) as object[];
+                return error == (int)swBodyOperationError_e.swBodyOperationNoError && (remainder == null || remainder.Length == 0);
+            }
+            catch { return false; }
+            finally { if (remainder != null) foreach (object body in remainder) Release(body); Release(target); Release(tool); }
         }
 
         internal static void VerifyStep(ISldWorks app, string path, IList<ExportResultItem> expectedParts, string cancelFile, Action<string> validationLevel = null)
@@ -237,13 +257,16 @@ namespace SWBodyOrganizer
             List<IBody2> actualBodies = new List<IBody2>();
             List<IModelDoc2> importedChildren = new List<IModelDoc2>();
             object[] existing = app.GetDocuments() as object[] ?? new object[0];
+            HashSet<string> existingDocuments = new HashSet<string>(existing.OfType<IModelDoc2>().Select(DocumentKey), StringComparer.OrdinalIgnoreCase);
             try
             {
                 WorkerMain.CheckCancellation(cancelFile);
                 int errors = 0;
-                bool interconnect = app.GetUserPreferenceToggle((int)swUserPreferenceToggle_e.swMultiCAD_Enable3DInterconnect);
-                imported = app.LoadFile4(path, interconnect ? string.Empty : "r", null, ref errors) as IModelDoc2;
+                WorkerMain.Emit("PROGRESS", 97, "重新导入 STEP", Path.GetFileName(path));
+                using (ImportTemplateScope templates = new ImportTemplateScope(app))
+                    imported = app.LoadFile4(path, string.Empty, null, ref errors) as IModelDoc2;
                 if (imported == null) throw new InvalidDataException("STEP 无法重新导入，错误=" + errors + " / STEP reimport failed.");
+                WorkerMain.Emit("PROGRESS", 97, "读取 STEP 实体", Path.GetFileName(path));
                 if (validationLevel != null) validationLevel("可重新打开");
                 WorkerMain.CheckCancellation(cancelFile);
                 CollectBodies(app, imported, actualBodies, importedChildren);
@@ -251,18 +274,22 @@ namespace SWBodyOrganizer
                     throw new InvalidDataException("STEP 实体数不一致，预期 " + expectedParts.Count + "，实际 " + actualBodies.Count + " / STEP solid count differs.");
                 foreach (ExportResultItem expectedPart in expectedParts)
                 {
+                    WorkerMain.Emit("PROGRESS", 97, "比对 STEP 几何", expectedPart.ExportName);
                     WorkerMain.CheckCancellation(cancelFile);
                     if (!WorkerMain.IsSuccessful(expectedPart.SldprtStatus) || expectedPart.SldprtVerification != "几何验证通过")
                         throw new InvalidDataException("不能使用未验证零件检查 STEP。 / Cannot validate STEP against an unverified part.");
                     IModelDoc2 expectedModel = null;
                     object[] expectedBodies = null;
                     bool previouslyOpen = false;
+                    string referenceCopy = Path.Combine(Path.GetDirectoryName(path), "__MM_VERIFY_" + Guid.NewGuid().ToString("N") + ".SLDPRT");
                     try
                     {
-                        expectedModel = app.GetOpenDocumentByName(expectedPart.SldprtPath) as IModelDoc2;
-                        previouslyOpen = expectedModel != null;
+                        // Importing foo.STEP creates foo.SLDPRT in memory. Opening the
+                        // real foo.SLDPRT then fails with 65536, or resolves the wrong
+                        // document. A unique, byte-identical reference avoids both.
+                        File.Copy(expectedPart.SldprtPath, referenceCopy, false);
                         int warnings = 0;
-                        if (expectedModel == null) expectedModel = app.OpenDoc6(expectedPart.SldprtPath, (int)swDocumentTypes_e.swDocPART,
+                        expectedModel = app.OpenDoc6(referenceCopy, (int)swDocumentTypes_e.swDocPART,
                             (int)swOpenDocOptions_e.swOpenDocOptions_Silent | (int)swOpenDocOptions_e.swOpenDocOptions_ReadOnly, string.Empty, ref errors, ref warnings);
                         if (expectedModel == null) throw new InvalidDataException("无法重新打开已验证零件。 / Cannot reopen verified part.");
                         if (expectedModel.GetSaveFlag()) throw new InvalidDataException("导出零件出现未保存修改。 / Exported part has unsaved changes.");
@@ -287,6 +314,7 @@ namespace SWBodyOrganizer
                         if (expectedBodies != null) foreach (object value in expectedBodies) Release(value);
                         if (expectedModel != null && !previouslyOpen) try { app.CloseDoc(expectedModel.GetTitle()); } catch { }
                         Release(expectedModel);
+                        try { if (File.Exists(referenceCopy)) File.Delete(referenceCopy); } catch { }
                     }
                 }
                 if (validationLevel != null) validationLevel("几何验证通过");
@@ -294,12 +322,12 @@ namespace SWBodyOrganizer
             finally
             {
                 foreach (IBody2 body in actualBodies) Release(body);
-                if (imported != null && !existing.Any(value => app.IsSame(value, imported) == (int)swObjectEquality.swObjectSame)) try { app.CloseDoc(imported.GetTitle()); } catch { }
+                if (imported != null && !existingDocuments.Contains(DocumentKey(imported))) try { app.CloseDoc(imported.GetTitle()); } catch { }
                 foreach (IModelDoc2 child in importedChildren)
                 {
                     try
                     {
-                        if (!existing.Any(value => app.IsSame(value, child) == (int)swObjectEquality.swObjectSame)) app.CloseDoc(child.GetTitle());
+                        if (!existingDocuments.Contains(DocumentKey(child))) app.CloseDoc(child.GetTitle());
                     }
                     catch { }
                     Release(child);
@@ -308,6 +336,8 @@ namespace SWBodyOrganizer
                 foreach (object value in existing) Release(value);
             }
         }
+
+        private static string DocumentKey(IModelDoc2 model) { return model.GetPathName() + "|" + model.GetTitle(); }
 
         private static void CollectBodies(ISldWorks app, IModelDoc2 model, List<IBody2> copies, List<IModelDoc2> children)
         {

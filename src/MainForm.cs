@@ -185,6 +185,7 @@ namespace SWBodyOrganizer
             actions.Controls.Add(ToolbarCaption("文件"));
             actions.Controls.Add(MakeButton("＋ 添加零件", AddFiles));
             actions.Controls.Add(MakeButton("移除文件", RemoveSelectedSource));
+            actions.Controls.Add(MakeButton(UiText.T("重新关联", "Relink source"), RelinkSelectedSource));
             actions.Controls.Add(ToolbarDivider());
             actions.Controls.Add(ToolbarCaption("项目"));
             actions.Controls.Add(MakeButton("打开项目", OpenProject));
@@ -193,6 +194,7 @@ namespace SWBodyOrganizer
             actions.Controls.Add(ToolbarCaption("系统"));
             actions.Controls.Add(MakeButton("打开 SolidWorks", OpenSolidWorksManually));
             actions.Controls.Add(MakeButton("重新读取", delegate { StartScan(); }));
+            actions.Controls.Add(MakeButton(UiText.T("保存源文件并重读", "Save sources and rescan"), SaveSourcesAndRescan));
             actions.Controls.Add(MakeButton("设置", OpenSettings));
             Button sidebar = MakeButton("侧栏", delegate { if (workArea != null) workArea.Panel2Collapsed = !workArea.Panel2Collapsed; });
             toolTip.SetToolTip(sidebar, "显示或收起预览 / 分类侧栏，扩大列表空间。\nShow or hide the preview/category sidebar for a wider list.");
@@ -229,7 +231,7 @@ namespace SWBodyOrganizer
             sourceList.DrawItem += DrawSourceItem;
             sourceList.SelectedIndexChanged += delegate { CommitExportNameEdit(); RefreshGrid(); };
             sourceList.MouseMove += ShowSourceToolTip;
-            Label hint = new Label { Text = "多文件拖入 · 源文件只读", Dock = DockStyle.Bottom, Height = 52, ForeColor = Color.FromArgb(55, 64, 76), Font = UiBrand.CreateFont(UiBrand.SecondaryFontSize), Padding = new Padding(3, 7, 0, 0) };
+            Label hint = new Label { Text = UiText.T("另存后用“重新关联”保留命名", "Use Relink after Save As to retain names"), Dock = DockStyle.Bottom, Height = 52, ForeColor = Color.FromArgb(55, 64, 76), Font = UiBrand.CreateFont(UiBrand.SecondaryFontSize), Padding = new Padding(3, 7, 0, 0) };
             panel.Controls.Add(sourceList);
             panel.Controls.Add(hint);
             panel.Controls.Add(searchPanel);
@@ -734,14 +736,16 @@ namespace SWBodyOrganizer
             if (added > 0) { MarkProjectDirty(); StartScan(); }
         }
 
-        private void StartScan()
+        private void StartScan(bool saveSources = false)
         {
             if (worker.IsBusy || project.Sources.Count == 0) return;
             if (!ConfirmSolidWorksTask(UiText.T("读取", "scan"), UiText.T("读取实体并生成三视图", "read bodies and generate three projections"), true)) return;
             CommitGrid();
+            if (!BackupBeforeSourceChange()) return;
             WorkerRequest request = new WorkerRequest
             {
                 Operation = "scan",
+                SaveSourcesBeforeScan = saveSources,
                 CacheRoot = AppPaths.Cache,
                 GeneratePreviews = true,
                 KeepSourceDocumentsOpen = true,
@@ -759,6 +763,11 @@ namespace SWBodyOrganizer
                     RefreshGrid();
                 }
                 if (!response.Success) { MessageBox.Show(this, response.Message, "读取未完成", MessageBoxButtons.OK, MessageBoxIcon.Warning); ShowScanIssues(response); }
+                else
+                {
+                    List<SourceRecord> pendingSave = response.Sources.Where(source => (source.Message ?? "").Contains("未保存")).ToList();
+                    if (pendingSave.Count > 0) MessageBox.Show(this, string.Join("\n", pendingSave.Select(source => source.Name + "：" + source.Message).ToArray()), UiText.T("已读取，导出前需要保存", "Scanned; save before exporting"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
             });
         }
 
@@ -1594,6 +1603,11 @@ namespace SWBodyOrganizer
             int index = sourceList.IndexFromPoint(e.Location);
             SourceListItem item = index >= 0 && index < sourceList.Items.Count ? sourceList.Items[index] as SourceListItem : null;
             toolTip.SetToolTip(sourceList, item == null || string.IsNullOrWhiteSpace(item.Path) ? "全部源文件" : item.Path);
+            if (item != null)
+            {
+                SourceRecord source = project.Sources.FirstOrDefault(value => value.Id == item.Id);
+                if (source != null && !string.IsNullOrWhiteSpace(source.Message)) toolTip.SetToolTip(sourceList, source.Path + "\n" + source.Message);
+            }
         }
 
         private static string ShortSourceStatus(string status)

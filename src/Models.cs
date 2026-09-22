@@ -213,6 +213,7 @@ namespace SWBodyOrganizer
         public string CancelFile { get; set; }
         public bool GeneratePreviews { get; set; }
         public bool KeepSourceDocumentsOpen { get; set; }
+        public bool SaveSourcesBeforeScan { get; set; }
         public List<SourceRecord> Sources { get; set; }
         public List<ExportPlanItem> ExportItems { get; set; }
         public ExportSettings ExportSettings { get; set; }
