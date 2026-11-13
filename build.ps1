@@ -10,7 +10,7 @@ $compiler = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $swApi = if ([string]::IsNullOrWhiteSpace($SolidWorksApiPath)) { Join-Path $projectRoot 'modules\HoleTools\dependencies\SolidWorks.Interop' } else { [IO.Path]::GetFullPath($SolidWorksApiPath) }
 $output = Join-Path $projectRoot $OutputDirectory
 $macroSource = Join-Path $projectRoot 'macro\StepMacro.cs'
-$iconSource = Join-Path $projectRoot 'assets\MasterMiao-logo.png'
+$iconSource = Join-Path $projectRoot 'assets\MasterMiao-symbol.png'
 $iconOutput = Join-Path $output 'MasterMiao.ico'
 
 if (-not (Test-Path -LiteralPath $compiler)) { throw '.NET Framework C# compiler was not found.' }

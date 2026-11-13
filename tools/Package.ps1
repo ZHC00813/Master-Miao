@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$OutputDirectory)
+﻿param([Parameter(Mandatory=$true)][string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $buildRoot = Join-Path $projectRoot 'build'
@@ -14,7 +14,7 @@ $runtimeFiles = @('MasterMiao.exe','MasterMiao.exe.config','MasterMiao.StepMacro
 foreach ($name in $runtimeFiles) { Copy-Item -LiteralPath (Join-Path $buildRoot $name) -Destination $packageRoot }
 Copy-Item -LiteralPath (Join-Path $buildRoot 'RenderDrawingPdf.ps1') -Destination $packageRoot
 foreach ($name in @('Install-HoleTools.ps1','Register-Addin.ps1')) { Copy-Item -LiteralPath (Join-Path $buildRoot $name) -Destination $packageRoot }
-Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\MasterMiao-logo.png') -Destination $packageRoot
+Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\MasterMiao-symbol.png') -Destination $packageRoot
 $documents = @('MODULES_RELEASE.md','README.md','README.en.md','ARCHITECTURE.md','DEVELOPMENT_HISTORY.md','V1.2.5_COMPATIBILITY_AUDIT.md','V1.2.6_CHANGES.md','R2_FIX_VALIDATION.md','R3_CHANGES_AND_TESTS.md','R4_UI_NOTES.md','R5_FIX_NOTES.md','RELEASE_NOTES_R5.md','VALIDATION.md','ACCEPTANCE_CHECKLIST.md','TEST_RESULT.txt','THIRD_PARTY_NOTICE.md')
 foreach ($name in $documents) { Copy-Item -LiteralPath (Join-Path $projectRoot $name) -Destination $packageRoot }
 $sourceRoot = Join-Path $packageRoot 'Source'

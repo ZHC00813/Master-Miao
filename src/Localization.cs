@@ -66,7 +66,7 @@ namespace SWBodyOrganizer
 
     internal static class UiBrand
     {
-        public const string VersionCaption = "V1.4.0";
+        public const string VersionCaption = "V1.4.1";
         public const string FontFamily = "Microsoft YaHei UI";
         public const float BaseFontSize = 10.5F;
         public const float SecondaryFontSize = 9.75F;
@@ -97,7 +97,8 @@ namespace SWBodyOrganizer
             Icon extracted = null;
             try
             {
-                extracted = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+                string iconPath=System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"MasterMiao.ico");
+                extracted = System.IO.File.Exists(iconPath)?new Icon(iconPath,64,64):Icon.ExtractAssociatedIcon(Application.ExecutablePath);
                 form.Icon = extracted == null ? (Icon)SystemIcons.Application.Clone() : (Icon)extracted.Clone();
             }
             catch { form.Icon = (Icon)SystemIcons.Application.Clone(); }

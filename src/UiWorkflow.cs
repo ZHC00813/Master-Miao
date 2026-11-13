@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -164,6 +164,7 @@ namespace SWBodyOrganizer
             undoButton.Click += delegate { UndoEdit(); }; actions.Controls.Add(undoButton);
             actions.Controls.Add(MakeMenuButton("更多 ▾", delegate(ContextMenuStrip menu)
             {
+                menu.Items.Add("撤销",null,(s,e)=>UndoEdit()).Enabled=undoButton.Enabled;
                 menu.Items.Add(UiText.T("命名预览", "Batch names"), null, PreviewBatchNames);
                 menu.Items.Add(UiText.T("审查疑似重复", "Review duplicates"), null, ReviewDuplicates);
                 menu.Items.Add(new ToolStripSeparator());
@@ -221,12 +222,23 @@ namespace SWBodyOrganizer
             compactList.Text = UiText.T("紧凑列表", "Compact list"); compactList.AutoSize = true;
             compactList.CheckedChanged += delegate { CommitGrid(); ApplyCompactMode(); };
             compactList.Anchor = AnchorStyles.Left;
-            row.Controls.Add(compactList, 3, 0);
+            restoreHidden.Dock=DockStyle.Fill;
+            restoreHidden.Visible=false;
+            restoreHidden.Click+=(sender,e)=>{CommitGrid();hiddenBodies.Clear();RefreshGrid();};
+            row.Controls.Add(restoreHidden,3,0);
             return row;
         }
 
+        private readonly Button restoreHidden=new Button { FlatStyle=FlatStyle.Flat };
+        private readonly HashSet<string> hiddenBodies=new HashSet<string>();
+        private AppProject hiddenProject;
+
         private IEnumerable<BodyRecord> FilterBodies(IEnumerable<BodyRecord> items)
         {
+            if(!ReferenceEquals(hiddenProject,project)) {hiddenBodies.Clear();hiddenProject=project;}
+            restoreHidden.Visible=hiddenBodies.Count>0;
+            restoreHidden.Text=UiText.T("恢复隐藏","Show hidden")+" ("+hiddenBodies.Count+")";
+            items=items.Where(body=>!hiddenBodies.Contains(body.Id));
             string query = bodySearch.Text.Trim();
             if (query.Length > 0) items = items.Where(body => (body.OriginalName ?? "").IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0 || (body.ExportName ?? "").IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0);
             if (bodyFilter.SelectedIndex == 1) items = items.Where(body => body.CategoryId == CategoryNode.UnclassifiedId);
@@ -248,7 +260,7 @@ namespace SWBodyOrganizer
         private void ApplyCompactMode()
         {
             if (bodyGrid.Columns.Count == 0) return;
-            foreach (string name in new[] { "ThumbnailIso", "ThumbnailFront", "ThumbnailTop" }) bodyGrid.Columns[name].Visible = !compactList.Checked;
+            foreach (string name in new[] { "ThumbnailIso", "ThumbnailFront", "ThumbnailTop" }) bodyGrid.Columns[name].Visible = !compactList.Checked && (name=="ThumbnailIso" || extraViews);
             bodyGrid.Columns["OriginalName"].Visible = !compactList.Checked;
             int height = compactList.Checked ? Math.Max(30, (int)(34 * project.ListZoomPercent / 100F)) : Math.Max(62, (int)(78 * project.ListZoomPercent / 100F));
             bodyGrid.RowTemplate.Height = height;
@@ -321,7 +333,7 @@ namespace SWBodyOrganizer
                 BodyRecord old = matches[0];
                 restored++;
                 body.Id = old.Id;
-                body.CopyNaming(old);
+                body.CopyNaming(old); body.Highlighted=old.Highlighted; body.OrganizerNote=old.OrganizerNote;
                 body.CategoryId = categoryIds.Contains(old.CategoryId)
                     ? old.CategoryId : CategoryNode.UnclassifiedId;
                 body.ExportSelected = old.ExportSelected;
@@ -580,11 +592,11 @@ namespace SWBodyOrganizer
     {
         private readonly List<CategoryNode> categories;
         private readonly Dictionary<string, BodyRecord> bodies;
-        public EditUndoState(AppProject project) { categories = JsonFile.Clone(project.Categories); bodies = project.AllBodies().ToDictionary(body => body.Id, body => new BodyRecord { ExportName = body.ExportName, NamingBase=body.NamingBase, AppliedPrefix=body.AppliedPrefix, AppliedSuffix=body.AppliedSuffix, CategoryId = body.CategoryId, ExportSelected = body.ExportSelected, ConfirmedDuplicateGroupId = body.ConfirmedDuplicateGroupId, CandidateSuppressed = body.CandidateSuppressed }); }
+        public EditUndoState(AppProject project) { categories = JsonFile.Clone(project.Categories); bodies = project.AllBodies().ToDictionary(body => body.Id, body => new BodyRecord { ExportName = body.ExportName, NamingBase=body.NamingBase, AppliedPrefix=body.AppliedPrefix, AppliedSuffix=body.AppliedSuffix, CategoryId = body.CategoryId, ExportSelected = body.ExportSelected, ConfirmedDuplicateGroupId = body.ConfirmedDuplicateGroupId, CandidateSuppressed = body.CandidateSuppressed, Highlighted=body.Highlighted, OrganizerNote=body.OrganizerNote }); }
         public void Restore(AppProject project)
         {
             project.Categories = categories;
-            foreach (BodyRecord body in project.AllBodies()) { BodyRecord old; if (!bodies.TryGetValue(body.Id, out old)) continue; body.CopyNaming(old); body.CategoryId = old.CategoryId; body.ExportSelected = old.ExportSelected; body.ConfirmedDuplicateGroupId = old.ConfirmedDuplicateGroupId; body.CandidateSuppressed = old.CandidateSuppressed; }
+            foreach (BodyRecord body in project.AllBodies()) { BodyRecord old; if (!bodies.TryGetValue(body.Id, out old)) continue; body.CopyNaming(old); body.Highlighted=old.Highlighted; body.OrganizerNote=old.OrganizerNote; body.CategoryId = old.CategoryId; body.ExportSelected = old.ExportSelected; body.ConfirmedDuplicateGroupId = old.ConfirmedDuplicateGroupId; body.CandidateSuppressed = old.CandidateSuppressed; }
         }
     }
 

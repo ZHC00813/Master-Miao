@@ -1,7 +1,7 @@
-[Setup]
+﻿[Setup]
 AppId=MasterMiao.Workspace
 AppName=喵师傅 Master Miao
-AppVersion=1.4.0
+AppVersion=1.4.1
 DefaultDirName={localappdata}\Programs\MasterMiao
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
@@ -9,7 +9,7 @@ DefaultGroupName=Master Miao
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\MasterMiao.ico
 SetupIconFile=..\build\MasterMiao.ico
-OutputBaseFilename=MasterMiao-1.4.0-Setup-x64
+OutputBaseFilename=MasterMiao-1.4.1-Setup-x64
 Compression=lzma2
 SolidCompression=yes
 [Files]

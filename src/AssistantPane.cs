@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -28,7 +28,7 @@ namespace SWBodyOrganizer
                 using(var bitmap=icon.ToBitmap())
                 {
                     var avatar=new PictureBox { Left=3,Top=2, Width=32,Height=32,SizeMode=PictureBoxSizeMode.Zoom,
-                        Image=bitmap.Clone(new Rectangle(8,1,48,48),bitmap.PixelFormat), AccessibleName="喵师傅" };
+                        Image=new Bitmap(bitmap), AccessibleName="喵师傅" };
                     avatar.Disposed+=(s,e)=>avatar.Image.Dispose();
                     row.Controls.Add(avatar);
                 }

@@ -1,6 +1,8 @@
-# MasterMiao V1.2.6 · 0922-R5
+# 喵师傅 Master Miao 1.4.1
 
-**[下载喵师傅 1.4.0 Windows x64 安装程序](https://github.com/ZHC00813/Master-Miao/raw/refs/heads/main/releases/v1.4.0/MasterMiao-1.4.0-Setup-x64.exe)**
+**[下载喵师傅 1.4.1 Windows x64 安装程序](https://github.com/ZHC00813/Master-Miao/raw/refs/heads/main/releases/v1.4.1/MasterMiao-1.4.1-Setup-x64.exe)**
+
+[阅读 1.4.1 中文功能说明](releases/v1.4.1/喵师傅-1.4.1-功能说明.txt)。实体列表支持右键反选、隐藏、行高亮和多行备注。
 
 本版包含多实体导出、自动工程图、孔标签分组与 AI 助手。安装后从左侧设置管理快捷键和 DeepSeek API Key，从孔标注助手部署 SolidWorks 插件。
 

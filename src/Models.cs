@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -88,6 +88,8 @@ namespace SWBodyOrganizer
         public double SurfaceArea { get; set; }
         public string ConfirmedDuplicateGroupId { get; set; }
         public bool CandidateSuppressed { get; set; }
+        public bool Highlighted { get; set; }
+        public string OrganizerNote { get; set; }
         public string OriginalName { get; set; }
         private string exportName;
         public string ExportName

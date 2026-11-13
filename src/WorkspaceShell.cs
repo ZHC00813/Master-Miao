@@ -33,7 +33,7 @@ namespace SWBodyOrganizer
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
-            var brand = new Label { Text = "喵师傅", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Font = UiBrand.CreateFont(17F, FontStyle.Bold), ForeColor = Color.White, BackColor = Color.FromArgb(215, 25, 32), Image = Icon.ToBitmap(), ImageAlign = ContentAlignment.MiddleLeft, Padding = new Padding(8, 0, 0, 0) };
+            var brand = new Label { Text = "喵师傅", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleRight, Font = UiBrand.CreateFont(17F, FontStyle.Bold), ForeColor = Color.White, BackColor = Color.FromArgb(215, 25, 32), Image = new Bitmap(Icon.ToBitmap(),34,34), ImageAlign = ContentAlignment.MiddleLeft, Padding = new Padding(12, 0, 18, 0) };
             var brandImage = brand.Image;
             brand.Disposed += (sender, e) => brandImage.Dispose();
             root.Controls.Add(brand, 0, 0);

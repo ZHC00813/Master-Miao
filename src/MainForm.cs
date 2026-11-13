@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -21,6 +21,8 @@ namespace SWBodyOrganizer
         private readonly DataGridView bodyGrid = new DataGridView();
         private readonly TabControl rightTabs = new TabControl();
         private SplitContainer workArea;
+        private bool hideInspector, extraViews, lastExportFinished;
+        private TableLayoutPanel listTools;
         private readonly TabControl categoryModes = new TabControl();
         private readonly FolderCanvas folderCanvas = new FolderCanvas();
         private readonly TreeView categoryTree = new TreeView();
@@ -46,7 +48,7 @@ namespace SWBodyOrganizer
         private readonly Label environmentLabel = new Label();
         private readonly Label countLabel = new Label();
         private readonly Button cancelButton = new Button();
-        private readonly Button exportButton = new Button();
+        private readonly Button exportButton = new ExportActionButton();
         private readonly Button openReportButton = new Button();
         private readonly Button finishNameEditButton = new Button();
         private readonly ImeSafeNameTextBox exportNameEditor = new ImeSafeNameTextBox();
@@ -166,7 +168,7 @@ namespace SWBodyOrganizer
                 if (workArea.Width > 700) workArea.SplitterDistance = workArea.Width - 326;
             };
 
-            root.Controls.Add(BuildExportPanel(), 0, 4);
+            root.Controls.Add(BuildExportPanel(root), 0, 4);
             Panel status = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(10, 4, 10, 3) };
             progressLabel.Text = "就绪。可拖入一个或多个 .SLDPRT 文件。";
             progressLabel.AutoEllipsis = true;
@@ -182,21 +184,21 @@ namespace SWBodyOrganizer
             TableLayoutPanel bar = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.White, ColumnCount = 1, RowCount = 1, Padding = new Padding(10, 6, 10, 5) };
             bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             FlowLayoutPanel actions = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, AutoScroll = true, Margin = new Padding(0) };
-            actions.Controls.Add(ToolbarCaption("文件"));
-            actions.Controls.Add(MakeButton("＋ 添加零件", AddFiles));
-            actions.Controls.Add(MakeButton("移除文件", RemoveSelectedSource));
-            actions.Controls.Add(MakeButton(UiText.T("重新关联", "Relink source"), RelinkSelectedSource));
+            
+            var addSource=MakeButton("＋ 添加零件",AddFiles);addSource.BackColor=BrandRed;addSource.ForeColor=Color.White;actions.Controls.Add(addSource);
+            
+            
             actions.Controls.Add(ToolbarDivider());
-            actions.Controls.Add(ToolbarCaption("项目"));
+            
             actions.Controls.Add(MakeButton("打开项目", OpenProject));
             actions.Controls.Add(MakeButton("保存项目", SaveProject));
             actions.Controls.Add(ToolbarDivider());
-            actions.Controls.Add(ToolbarCaption("系统"));
+            
             actions.Controls.Add(MakeButton("打开 SolidWorks", OpenSolidWorksManually));
-            actions.Controls.Add(MakeButton("重新读取", delegate { StartScan(); }));
-            actions.Controls.Add(MakeButton(UiText.T("保存源文件并重读", "Save sources and rescan"), SaveSourcesAndRescan));
+            
+            
 
-            Button sidebar = MakeButton("侧栏", delegate { if (workArea != null) workArea.Panel2Collapsed = !workArea.Panel2Collapsed; });
+            Button sidebar = MakeButton("侧栏", delegate { if (workArea != null) { hideInspector=!workArea.Panel2Collapsed; workArea.Panel2Collapsed=hideInspector; } });
             toolTip.SetToolTip(sidebar, "显示或收起预览 / 分类侧栏，扩大列表空间。\nShow or hide the preview/category sidebar for a wider list.");
             actions.Controls.Add(sidebar);
             bar.Controls.Add(actions, 0, 0);
@@ -233,7 +235,13 @@ namespace SWBodyOrganizer
             sourceList.MouseMove += ShowSourceToolTip;
             Label hint = new Label { Text = UiText.T("另存后用“重新关联”保留命名", "Use Relink after Save As to retain names"), Dock = DockStyle.Bottom, Height = 52, ForeColor = Color.FromArgb(55, 64, 76), Font = UiBrand.CreateFont(UiBrand.SecondaryFontSize), Padding = new Padding(3, 7, 0, 0) };
             panel.Controls.Add(sourceList);
-            panel.Controls.Add(hint);
+            var sourceActions=MakeMenuButton("源文件操作 ▾", menu=>{
+                menu.Items.Add("重新读取",null,(s,e)=>StartScan());
+                menu.Items.Add("保存源文件并重读",null,SaveSourcesAndRescan);
+                menu.Items.Add("重新关联",null,RelinkSelectedSource);
+                menu.Items.Add("移除文件",null,RemoveSelectedSource);
+            });
+            sourceActions.Dock=DockStyle.Bottom;panel.Controls.Add(sourceActions);
             panel.Controls.Add(searchPanel);
             panel.Controls.Add(title);
             return panel;
@@ -242,8 +250,9 @@ namespace SWBodyOrganizer
         private Control BuildBodyPanel()
         {
             Panel panel = Card();
-            TableLayoutPanel bar = new TableLayoutPanel { Dock = DockStyle.Top, Height = 190, BackColor = Color.White, ColumnCount = 1, RowCount = 5 };
-            foreach (int height in new[] { 32, 40, 38, 40, 40 }) bar.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+            TableLayoutPanel bar = new TableLayoutPanel { Dock = DockStyle.Top, Height = 150, BackColor = Color.White, ColumnCount = 1, RowCount = 4 };
+            listTools=bar;
+            foreach (int height in new[] { 32, 40, 38, 40 }) bar.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
             Label title = SectionTitle("实体列表");
             title.Dock = DockStyle.Left;
             countLabel.AutoSize = false;
@@ -281,13 +290,6 @@ namespace SWBodyOrganizer
             finishNameEditButton.Click += FinishExportNameEdit;
             toolTip.SetToolTip(finishNameEditButton, "单击导出名称开始输入；输入法选字和 Enter 不会退出，点击这里提交，Esc 取消");
             actions.Controls.Add(finishNameEditButton);
-            secondary.Controls.Add(MakeSmallButton("全选", delegate { SetSelection(1); }));
-            secondary.Controls.Add(MakeMenuButton("选择 ▾", delegate(ContextMenuStrip menu)
-            {
-                menu.Items.Add(UiText.T("全选", "Select all"), null, delegate { SetSelection(1); });
-                menu.Items.Add(UiText.T("全不选", "Select none"), null, delegate { SetSelection(0); });
-                menu.Items.Add(UiText.T("反选", "Invert"), null, delegate { SetSelection(-1); });
-            }));
             secondary.Controls.Add(new Label { Text = "缩放", AutoSize = true, Padding = new Padding(6, 5, 0, 0), ForeColor = Color.FromArgb(58, 64, 73), Font = UiBrand.CreateFont(UiBrand.SecondaryFontSize) });
             zoomCombo.Width = 72;
             zoomCombo.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -303,7 +305,17 @@ namespace SWBodyOrganizer
             bar.Controls.Add(filterBar, 0, 1);
             bar.Controls.Add(BuildNamingDefaults(), 0, 2);
             bar.Controls.Add(actions, 0, 3);
-            bar.Controls.Add(secondary, 0, 4);
+            secondary.Visible=false;
+            actions.AutoScroll=true;
+            actions.Controls.Add(MakeMenuButton("视图 ▾", menu=>{
+                menu.Items.Add("紧凑列表",null,(s,e)=>compactList.Checked=!compactList.Checked);
+                menu.Items.Add("显示 / 隐藏前视图和上视图",null,(s,e)=>{extraViews=!extraViews;ApplyCompactMode();});
+                foreach(var zoom in zoomCombo.Items.Cast<object>()) { var z=zoom; menu.Items.Add(z.ToString(),null,(s,e)=>zoomCombo.SelectedItem=z); }
+            }));
+            foreach(Control c in secondary.Controls.Cast<Control>().Where(c=>c.Text.StartsWith("更多")).ToList()) actions.Controls.Add(c);
+            panel.Controls.Add(secondary);
+            finishNameEditButton.Visible=false;
+            finishNameEditButton.EnabledChanged+=(s,e)=>finishNameEditButton.Visible=finishNameEditButton.Enabled;
             bodyGrid.Dock = DockStyle.Fill;
             panel.Controls.Add(bodyGrid);
             BuildEmptyState();
@@ -323,7 +335,8 @@ namespace SWBodyOrganizer
             content.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
             content.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
             content.RowStyles.Add(new RowStyle(SizeType.Percent, 58));
-            Label icon = new Label { Text = "▱", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.FromArgb(190, 195, 202), Font = new Font("Segoe UI Symbol", 30F) };
+            var icon=new PictureBox { Size=new Size(48,48),Anchor=AnchorStyles.None,SizeMode=PictureBoxSizeMode.Zoom,Image=Icon.ToBitmap() };
+            icon.Disposed+=(s,e)=>icon.Image.Dispose();
             Label primary = new Label { Text = "将一个或多个 .SLDPRT 文件拖到这里", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.FromArgb(52, 58, 66), Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold) };
             Button add = MakeButton("＋ 添加零件", AddFiles);
             add.Anchor = AnchorStyles.None;
@@ -333,7 +346,8 @@ namespace SWBodyOrganizer
             content.Controls.Add(new Panel(), 0, 0);
             content.Controls.Add(icon, 0, 1);
             content.Controls.Add(primary, 0, 2);
-            content.Controls.Add(add, 0, 3);
+            var entry=new FlowLayoutPanel {AutoSize=true,Anchor=AnchorStyles.None,WrapContents=false};
+            entry.Controls.Add(add);entry.Controls.Add(MakeButton("打开项目",OpenProject));content.Controls.Add(entry,0,3);
             content.Controls.Add(new Label { Text = "支持多文件选择，加入后自动读取实体并生成三视图", Dock = DockStyle.Top, Height = 28, TextAlign = ContentAlignment.TopCenter, ForeColor = Color.FromArgb(75, 81, 90), Font = UiBrand.CreateFont(UiBrand.SecondaryFontSize) }, 0, 4);
             emptyStatePanel.Controls.Add(content);
         }
@@ -343,7 +357,7 @@ namespace SWBodyOrganizer
             rightTabs.Dock = DockStyle.Fill;
             rightTabs.Font = Font;
             TabPage previewPage = new TabPage("预览") { BackColor = Color.White, Padding = new Padding(7) };
-            Panel info = new Panel { Dock = DockStyle.Top, Height = 112, BackColor = Color.White, Padding = new Padding(6, 5, 6, 5) };
+            Panel info = new Panel { Dock = DockStyle.Top, Height = 150, BackColor = Color.White, Padding = new Padding(6, 5, 6, 5) };
             previewNameLabel.Dock = DockStyle.Top;
             previewNameLabel.Height = 28;
             previewNameLabel.Font = UiBrand.CreateFont(11.5F, FontStyle.Bold);
@@ -427,7 +441,7 @@ namespace SWBodyOrganizer
             }
         }
 
-        private Control BuildExportPanel()
+        private Control BuildExportPanel(TableLayoutPanel root)
         {
             Panel panel = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(12, 7, 12, 7) };
             TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 4 };
@@ -494,15 +508,15 @@ namespace SWBodyOrganizer
             stepFolders.Controls.Add(dedupCheck);
             layout.Controls.Add(stepFolders, 0, 2);
 
-            exportButton.Text = "请选择需要导出的实体";
-            exportButton.Dock = DockStyle.Fill;
+            exportButton.Text = "请选择实体";
+            exportButton.Size = new Size(160,36); exportButton.Anchor = AnchorStyles.Right;
             exportButton.BackColor = BrandRed;
             exportButton.ForeColor = Color.White;
             exportButton.FlatStyle = FlatStyle.Flat;
             exportButton.FlatAppearance.BorderSize = 0;
             exportButton.Font = new Font(Font, FontStyle.Bold);
             exportButton.Click += delegate { StartExport(); };
-            layout.SetRowSpan(exportButton, 4);
+            
             layout.Controls.Add(exportButton, 1, 0);
 
             Panel progressPanel = new Panel { Dock = DockStyle.Fill };
@@ -541,6 +555,30 @@ namespace SWBodyOrganizer
             openReportButton.Click += OpenLastReport;
             policy.Controls.Add(openReportButton);
             footer.Controls.Add(policy);
+            var expand=MakeSmallButton("导出选项 ▾",delegate{});
+            expand.AutoSize=false;expand.Width=210;expand.Anchor=AnchorStyles.Top|AnchorStyles.Right;
+            output.Controls.Add(expand);
+            output.Resize+=delegate{expand.Location=new Point(output.ClientSize.Width-expand.Width-2,3);browse.Left=expand.Left-100;outputBox.Width=Math.Max(80,browse.Left-outputBox.Left-8);};
+            bool expanded=false;
+            Action updateFooter=()=>{
+                options.Visible=stepFolders.Visible=expanded;
+                stepFolders.Controls[0].Visible=stepFolderCombo.Visible=stepCheck.Checked || stepOnlyCheck.Checked;
+                conflictCombo.Visible=policy.Controls[0].Visible=expanded;
+                cancelButton.Visible=cancelButton.Enabled;
+                openReportButton.Visible=openReportButton.Enabled;
+                openOutput.Visible=Directory.Exists(outputBox.Text) && (expanded || openReportButton.Enabled || lastExportFinished);
+                progressPanel.Visible=cancelButton.Enabled;
+                bool showFooter=expanded || cancelButton.Enabled || openOutput.Visible || openReportButton.Enabled;
+                layout.RowStyles[1].Height=expanded?45:0;layout.RowStyles[2].Height=expanded?42:0;layout.RowStyles[3].Height=showFooter?45:0;
+                root.RowStyles[4].Height=56+layout.RowStyles[1].Height+layout.RowStyles[2].Height+layout.RowStyles[3].Height;
+                var formats=string.Join(" + ",new[]{sldprtCheck,stepCheck,reportCheck,assemblyCheck}.Where(c=>c.Checked).Select(c=>c==reportCheck?"Excel":c.Text));
+                expand.Text=expanded?"收起选项 ▴":(formats.Length==0?"导出选项":formats)+" ▾";
+                toolTip.SetToolTip(expand,string.Join("、",new[]{sldprtCheck,stepCheck,reportCheck,assemblyCheck}.Where(c=>c.Checked).Select(c=>c.Text)));
+            };
+            expand.Click+=(s,e)=>{expanded=!expanded;updateFooter();};
+            expand.VisibleChanged+=(s,e)=>{if(expand.Visible) updateFooter();};cancelButton.EnabledChanged+=(s,e)=>updateFooter();openReportButton.EnabledChanged+=(s,e)=>updateFooter();
+            foreach(var check in new[]{stepCheck,stepOnlyCheck,sldprtCheck,reportCheck,assemblyCheck})check.CheckedChanged+=(s,e)=>updateFooter();
+            updateFooter();
             panel.Controls.Add(layout);
             return panel;
         }
@@ -582,8 +620,39 @@ namespace SWBodyOrganizer
             // The cell remains read-only and a separate editor owns the draft. This
             // prevents DataGridView from treating an IME confirmation Enter as an
             // instruction to finish the edit.
+            bodyGrid.ColumnHeaderMouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left && e.ColumnIndex==0 && !worker.IsBusy) SetSelection(bodyGrid.Rows.Cast<DataGridViewRow>().All(r=>(r.Tag as BodyRecord)?.ExportSelected==true)?0:1);};
             bodyGrid.CellClick += BeginExportNameEdit;
             bodyGrid.CellMouseDown += GridCellMouseDown;
+            bodyGrid.CellMouseClick += (sender,e)=>{
+                if(e.Button!=MouseButtons.Right || e.RowIndex<0 || worker.IsBusy) return;
+                var row=bodyGrid.Rows[e.RowIndex];
+                var body=row.Tag as BodyRecord;
+                if(body==null) return;
+                CommitGrid();
+                bodyGrid.CurrentCell=row.Cells["OriginalName"].Visible?row.Cells["OriginalName"]:row.Cells["ExportName"]; bodyGrid.ClearSelection(); row.Selected=true;
+                var menu=new ContextMenuStrip();
+                menu.Items.Add(UiText.T("全选","Select all"),null,(s,a)=>SetSelection(1));
+                menu.Items.Add(UiText.T("全不选","Select none"),null,(s,a)=>SetSelection(0));
+                menu.Items.Add(UiText.T("反选","Invert selection"),null,(s,a)=>SetSelection(-1));
+                menu.Items.Add(new ToolStripSeparator());
+                menu.Items.Add(body.Highlighted?UiText.T("取消高亮","Remove highlight"):UiText.T("高亮标记","Highlight"),null,(s,a)=>{
+                    RememberUndo(); body.Highlighted=!body.Highlighted;
+                    ApplyRowMark(row,body); MarkProjectDirty(); ShowSelectedPreviews();
+                });
+                menu.Items.Add(UiText.T("编辑备注…","Edit note…"),null,(s,a)=>{
+                    using(var dialog=new TextPrompt(UiText.T("实体备注","Body note"),body.ExportName,body.OrganizerNote ?? "",true))
+                    {
+                        if(dialog.ShowDialog(this)!=DialogResult.OK || dialog.Value==(body.OrganizerNote ?? "")) return;
+                        RememberUndo(); body.OrganizerNote=dialog.Value; ApplyRowMark(row,body); MarkProjectDirty(); ShowSelectedPreviews();
+                    }
+                });                menu.Items.Add(new ToolStripSeparator());
+                menu.Items.Add(UiText.T("隐藏此项","Hide this item"),null,(s,a)=>{
+                    foreach(var member in GetGroupMembers(body)) hiddenBodies.Add(member.Id);
+                    RefreshGrid();
+                });
+                menu.Closed+=(s,a)=>BeginInvoke(new Action(menu.Dispose));
+                menu.Show(Cursor.Position);
+            };
             bodyGrid.SelectionChanged += delegate { ShowSelectedPreviews(); };
             bodyGrid.DataError += delegate(object sender, DataGridViewDataErrorEventArgs e) { e.ThrowException = false; };
             bodyGrid.MouseDown += delegate(object sender, MouseEventArgs e) { gridDragStart = e.Location; };
@@ -1110,6 +1179,7 @@ namespace SWBodyOrganizer
 
         private void SetBusy(bool busy)
         {
+            if(busy) lastExportFinished=false; else if(cancelButton.Enabled) lastExportFinished=Directory.Exists(outputBox.Text);
             cancelButton.Enabled = busy;
             guidedButton.Enabled = !busy;
             locateButton.Enabled = !busy;
@@ -1222,7 +1292,7 @@ namespace SWBodyOrganizer
                 int quantity = GetGroupMembers(body).Count;
                 int row = bodyGrid.Rows.Add(body.ExportSelected, iso, front, top, body.OriginalName, body.ExportName, body.CategoryId, quantity > 1 ? "×" + quantity : "1", ShortBodyStatus(body));
                 bodyGrid.Rows[row].Tag = body;
-                foreach (DataGridViewCell cell in bodyGrid.Rows[row].Cells) cell.ToolTipText = body.SourceName + (string.IsNullOrWhiteSpace(body.Message) ? string.Empty : "\n" + body.Message);
+                ApplyRowMark(bodyGrid.Rows[row],body);
                 if (body.Status.Contains("失败")) bodyGrid.Rows[row].DefaultCellStyle.ForeColor = Color.Firebrick;
                 else if (body.CategoryId == CategoryNode.UnclassifiedId || IsDuplicateCandidate(body)) bodyGrid.Rows[row].Cells["Status"].Style.ForeColor = Color.FromArgb(202, 115, 25);
                 else bodyGrid.Rows[row].Cells["Status"].Style.ForeColor = Color.FromArgb(44, 125, 75);
@@ -1231,7 +1301,9 @@ namespace SWBodyOrganizer
             countLabel.Text = project.Export.Deduplicate
                 ? string.Format(UiText.T("{0} 组 / {1} 个实体 · 已选 {2}", "{0} groups / {1} bodies · selected {2}"), visibleBodies.Count, rawCount, visibleBodies.Count(item => item.ExportSelected))
                 : string.Format(UiText.T("{0} 个实体 · 已选 {1}", "{0} bodies · selected {1}"), visibleBodies.Count, visibleBodies.Count(item => item.ExportSelected));
-            emptyStatePanel.Visible = project.Sources.Count == 0;
+            bool empty=project.Sources.Count==0;
+            emptyStatePanel.Visible=empty; bodyGrid.Visible=!empty; listTools.Visible=!empty;
+            workArea.Panel2Collapsed=empty || hideInspector;
             gridRefreshing = false;
             ApplyCompactMode();
             ShowSelectedPreviews();
@@ -1380,6 +1452,15 @@ namespace SWBodyOrganizer
             UpdateSelectionSummary();
         }
 
+        private static void ApplyRowMark(DataGridViewRow row, BodyRecord body)
+        {
+            row.DefaultCellStyle.BackColor=body.Highlighted?Color.FromArgb(255,241,185):Color.Empty;
+            row.DefaultCellStyle.SelectionBackColor=body.Highlighted?Color.FromArgb(249,215,121):Color.Empty;
+            string tip=body.SourceName+(string.IsNullOrWhiteSpace(body.Message)?"":"\n"+body.Message);
+            if(!string.IsNullOrWhiteSpace(body.OrganizerNote)) tip+="\n"+UiText.T("备注：","Note: ")+body.OrganizerNote;
+            foreach(DataGridViewCell cell in row.Cells) cell.ToolTipText=tip;
+        }
+
         private void ShowSelectedPreviews()
         {
             BodyRecord body = bodyGrid.CurrentRow == null ? null : bodyGrid.CurrentRow.Tag as BodyRecord;
@@ -1391,6 +1472,7 @@ namespace SWBodyOrganizer
             previewDetailsLabel.Text = body == null
                 ? UiText.T("从实体列表选择一项以查看三视图与分类信息。", "Select a row to view three projections and category details.")
                 : string.Format(UiText.T("原实体：{0}\n来源：{1} · 分类：{2} · 相同件：{3}", "Original: {0}\nSource: {1} · Category: {2} · Identical: {3}"), body.OriginalName, body.SourceName, DisplayCategoryPath(body.CategoryId), GetGroupMembers(body).Count);
+            if(body!=null && !string.IsNullOrWhiteSpace(body.OrganizerNote)) previewDetailsLabel.Text+="\n"+UiText.T("备注：","Note: ")+body.OrganizerNote;
             toolTip.SetToolTip(previewDetailsLabel, previewDetailsLabel.Text);
         }
 
@@ -1645,13 +1727,14 @@ namespace SWBodyOrganizer
                 ? project.AllBodies().GroupBy(GeometryGroupKey).Count(group => group.Any(item => item.ExportSelected))
                 : project.AllBodies().Count(item => item.ExportSelected);
             int visibleSelected = bodyGrid.Rows.Cast<DataGridViewRow>().Count(row => (row.Tag as BodyRecord) != null && ((BodyRecord)row.Tag).ExportSelected);
+            if(bodyGrid.Columns.Count>0) {bodyGrid.Columns[0].HeaderText=bodyGrid.Rows.Count>0 && visibleSelected==bodyGrid.Rows.Count?"☑":"☐";bodyGrid.Columns[0].ToolTipText="选择 / 取消当前列表全部实体";}
             countLabel.Text = string.Format(UiText.T("显示 {0} 项 · 导出 {1} 项", "Showing {0} · Export {1}"), bodyGrid.Rows.Count, selected);
             toolTip.SetToolTip(countLabel, string.Format(UiText.T("当前显示 {0} 项 · 实际导出 {1} 项（全项目）", "Showing {0} · export scope {1} (whole project)"), bodyGrid.Rows.Count, selected));
             if (worker.IsBusy) return;
             bool hasFormat = sldprtCheck.Checked || stepCheck.Checked;
             exportButton.Enabled = selected > 0 && hasFormat;
             exportButton.Text = selected == 0
-                ? UiText.T("请选择需要导出的实体", "Select bodies to export")
+                ? UiText.T("请选择实体", "Select bodies to export")
                 : string.Format(UiText.T("导出 {0} 个实体{1}", "Export {0} part(s){1}"), selected, assemblyCheck.Checked ? UiText.T(" + 装配体", " + assembly") : string.Empty);
         }
 
@@ -2190,7 +2273,7 @@ namespace SWBodyOrganizer
         private readonly TextBox input = new TextBox();
         public string Value { get { return input.Text.Trim(); } }
 
-        public TextPrompt(string title, string label, string value)
+        public TextPrompt(string title, string label, string value, bool note=false)
         {
             UiBrand.ApplyIcon(this);
             Text = title; StartPosition = FormStartPosition.CenterParent; FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; MinimizeBox = false; ClientSize = new Size(420, 140); Font = UiBrand.CreateFont(UiBrand.BaseFontSize);
@@ -2198,10 +2281,11 @@ namespace SWBodyOrganizer
             input.Text = value; input.Location = new Point(20, 43); input.Width = 360;
             Button ok = new Button { Text = "确定", DialogResult = DialogResult.OK, Location = new Point(224, 84), Width = 74 };
             Button cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Location = new Point(306, 84), Width = 74 };
+            if(note){ClientSize=new Size(420,236);caption.AutoSize=false;caption.Width=380;caption.AutoEllipsis=true;input.Multiline=true;input.AcceptsReturn=true;input.ScrollBars=ScrollBars.Vertical;input.Height=130;ok.Top=cancel.Top=190;}
             AcceptButton = ok; CancelButton = cancel;
             Controls.Add(caption); Controls.Add(input); Controls.Add(ok); Controls.Add(cancel);
             Shown += delegate { input.Focus(); input.SelectAll(); };
-            FormClosing += delegate(object sender, FormClosingEventArgs e) { if (DialogResult == DialogResult.OK && string.IsNullOrWhiteSpace(Value)) { MessageBox.Show(this, "名称不能为空。", "名称"); e.Cancel = true; } };
+            FormClosing += delegate(object sender, FormClosingEventArgs e) { if (!note && DialogResult == DialogResult.OK && string.IsNullOrWhiteSpace(Value)) { MessageBox.Show(this, "名称不能为空。", "名称"); e.Cancel = true; } };
         }
     }
 
