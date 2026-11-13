@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -183,6 +183,25 @@ namespace SWBodyOrganizer
             FormClosed += delegate { workerWatchdog.Dispose(); DisposeThumbnailCache(); };
         }
 
+        private Control BuildNamingDefaults()
+        {
+            if (UserSettingsStore.Current==null) UserSettingsStore.Load();
+            var settings=UserSettingsStore.Current;
+            var row=new FlowLayoutPanel { Dock=DockStyle.Fill, WrapContents=false, Margin=Padding.Empty };
+            var prefix=new TextBox { Text=settings.CommonPrefix, Width=135, AccessibleName="常用前缀" };
+            var suffix=new TextBox { Text=settings.CommonSuffix, Width=135, AccessibleName="常用后缀" };
+            row.Controls.Add(new Label { Text=UiText.T("常用前缀","Prefix"), AutoSize=true, Padding=new Padding(2,5,0,0) });
+            row.Controls.Add(prefix);
+            row.Controls.Add(new Label { Text=UiText.T("常用后缀","Suffix"), AutoSize=true, Padding=new Padding(8,5,0,0) });
+            row.Controls.Add(suffix);
+            EventHandler persist=(s,e)=>{
+                if(settings.CommonPrefix==prefix.Text && settings.CommonSuffix==suffix.Text) return;
+                settings.CommonPrefix=prefix.Text; settings.CommonSuffix=suffix.Text; UserSettingsStore.Save();
+            };
+            prefix.Leave+=persist; suffix.Leave+=persist;
+            return row;
+        }
+
         private Control BuildBodyFilters()
         {
             TableLayoutPanel row = new TableLayoutPanel { Height = 42, ColumnCount = 4, RowCount = 1, Padding = new Padding(2), Margin = new Padding(0) };
@@ -302,7 +321,7 @@ namespace SWBodyOrganizer
                 BodyRecord old = matches[0];
                 restored++;
                 body.Id = old.Id;
-                body.ExportName = old.ExportName;
+                body.CopyNaming(old);
                 body.CategoryId = categoryIds.Contains(old.CategoryId)
                     ? old.CategoryId : CategoryNode.UnclassifiedId;
                 body.ExportSelected = old.ExportSelected;
@@ -561,11 +580,11 @@ namespace SWBodyOrganizer
     {
         private readonly List<CategoryNode> categories;
         private readonly Dictionary<string, BodyRecord> bodies;
-        public EditUndoState(AppProject project) { categories = JsonFile.Clone(project.Categories); bodies = project.AllBodies().ToDictionary(body => body.Id, body => new BodyRecord { ExportName = body.ExportName, CategoryId = body.CategoryId, ExportSelected = body.ExportSelected, ConfirmedDuplicateGroupId = body.ConfirmedDuplicateGroupId, CandidateSuppressed = body.CandidateSuppressed }); }
+        public EditUndoState(AppProject project) { categories = JsonFile.Clone(project.Categories); bodies = project.AllBodies().ToDictionary(body => body.Id, body => new BodyRecord { ExportName = body.ExportName, NamingBase=body.NamingBase, AppliedPrefix=body.AppliedPrefix, AppliedSuffix=body.AppliedSuffix, CategoryId = body.CategoryId, ExportSelected = body.ExportSelected, ConfirmedDuplicateGroupId = body.ConfirmedDuplicateGroupId, CandidateSuppressed = body.CandidateSuppressed }); }
         public void Restore(AppProject project)
         {
             project.Categories = categories;
-            foreach (BodyRecord body in project.AllBodies()) { BodyRecord old; if (!bodies.TryGetValue(body.Id, out old)) continue; body.ExportName = old.ExportName; body.CategoryId = old.CategoryId; body.ExportSelected = old.ExportSelected; body.ConfirmedDuplicateGroupId = old.ConfirmedDuplicateGroupId; body.CandidateSuppressed = old.CandidateSuppressed; }
+            foreach (BodyRecord body in project.AllBodies()) { BodyRecord old; if (!bodies.TryGetValue(body.Id, out old)) continue; body.CopyNaming(old); body.CategoryId = old.CategoryId; body.ExportSelected = old.ExportSelected; body.ConfirmedDuplicateGroupId = old.ConfirmedDuplicateGroupId; body.CandidateSuppressed = old.CandidateSuppressed; }
         }
     }
 
@@ -613,7 +632,7 @@ namespace SWBodyOrganizer
             if (MessageBox.Show(this, UiText.T("确认这些成员可作为同一零件生产？将采用第一个成员的名称、分类和导出选择。此操作是人工确认，不能代替几何/生产属性验证。", "Confirm these members can be produced as one part? The first member's name, category and selection will be used. This is a manual decision, not proof of geometry or manufacturing equivalence."), Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
             beforeChange(); string id = Guid.NewGuid().ToString("N"); BodyRecord first = selected[0];
             foreach (BodyRecord body in currentGroups[groups.SelectedIndex]) body.ConfirmedDuplicateGroupId = string.Empty;
-            foreach (BodyRecord body in selected) { body.ConfirmedDuplicateGroupId = id; body.ExportName = first.ExportName; body.CategoryId = first.CategoryId; body.ExportSelected = first.ExportSelected; }
+            foreach (BodyRecord body in selected) { body.ConfirmedDuplicateGroupId = id; body.CopyNaming(first); body.CategoryId = first.CategoryId; body.ExportSelected = first.ExportSelected; }
             changed(); Reload();
         }
         private void Exclude(object sender, EventArgs e) { List<BodyRecord> selected = Checked(); if (selected.Count == 0) return; beforeChange(); foreach (BodyRecord body in selected) { body.CandidateSuppressed = true; body.ConfirmedDuplicateGroupId = string.Empty; } changed(); Reload(); }

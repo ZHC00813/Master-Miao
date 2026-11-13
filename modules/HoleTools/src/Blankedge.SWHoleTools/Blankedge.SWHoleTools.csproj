@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64</Platforms>
+    <Prefer32Bit>false</Prefer32Bit>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Blankedge.SWHoleTools</RootNamespace>
+    <AssemblyName>Blankedge.SWHoleTools</AssemblyName>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <RegisterForComInterop>false</RegisterForComInterop>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(SolidWorksInstallDir)' == '' and Exists('C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS')">
+    <SolidWorksInstallDir>C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS</SolidWorksInstallDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(SolidWorksInteropDir)' == '' and '$(SolidWorksInstallDir)' != ''">
+    <SolidWorksInteropDir>$(SolidWorksInstallDir)\api\redist</SolidWorksInteropDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="SolidWorks.Interop.sldworks">
+      <HintPath>$(SolidWorksInteropDir)\SolidWorks.Interop.sldworks.dll</HintPath>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SolidWorks.Interop.swconst">
+      <HintPath>$(SolidWorksInteropDir)\SolidWorks.Interop.swconst.dll</HintPath>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SolidWorks.Interop.swpublished">
+      <HintPath>$(SolidWorksInteropDir)\SolidWorks.Interop.swpublished.dll</HintPath>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Runtime.Serialization" />
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+
+  <Target Name="ValidateSolidWorksInterop" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(SolidWorksInteropDir)\SolidWorks.Interop.sldworks.dll')"
+           Text="SOLIDWORKS Interop not found. Set SolidWorksInstallDir or SolidWorksInteropDir; see README.md." />
+  </Target>
+</Project>

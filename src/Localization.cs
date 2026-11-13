@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
@@ -66,7 +66,7 @@ namespace SWBodyOrganizer
 
     internal static class UiBrand
     {
-        public const string VersionCaption = "V1.2.6 · 0922-R5";
+        public const string VersionCaption = "V1.4.0";
         public const string FontFamily = "Microsoft YaHei UI";
         public const float BaseFontSize = 10.5F;
         public const float SecondaryFontSize = 9.75F;
@@ -114,6 +114,7 @@ namespace SWBodyOrganizer
         private readonly ShortcutKeyBox dedupKey = new ShortcutKeyBox();
         private readonly Label shortcutError = new Label();
         private readonly bool showShortcuts;
+        private KeyEditor keyEditor;
 
         public LanguageDialog(bool startup)
         {
@@ -145,14 +146,16 @@ namespace SWBodyOrganizer
             if (showShortcuts)
             {
                 Text = UiText.T("设置", "Settings");
-                ClientSize = new Size(590, 390);
+                ClientSize = new Size(605, 486);
                 ok.Text = UiText.T("确定", "OK"); cancel.Text = UiText.T("取消", "Cancel");
                 Controls.Add(new Label { Text = UiText.T("快捷键（点击输入框，然后按下按键）", "Shortcuts (click a box, then press the keys)"), Left = 28, Top = 148, Width = 530, Height = 24, Font = new Font(Font, FontStyle.Bold) });
                 AddShortcutRow(UiText.T("在 SW 中定位", "Locate in SW"), locateKey, 183, UserSettingsStore.Current.LocateShortcut);
                 AddShortcutRow(UiText.T("切换相同件合并", "Toggle duplicate merging"), dedupKey, 225, UserSettingsStore.Current.DeduplicateShortcut);
                 Controls.Add(new Label { Text = UiText.T("仅在本软件内生效；输入文字、读取和导出时暂停。默认不绑定。", "App-only; paused while typing, scanning or exporting. Unbound by default."), Left = 28, Top = 269, Width = 530, Height = 38 });
                 shortcutError.SetBounds(28, 306, 530, 36); shortcutError.ForeColor = Color.Firebrick; Controls.Add(shortcutError);
-                ok.Location = new Point(380, 350); cancel.Location = new Point(472, 350);
+                Controls.Add(new Label { Left=28,Top=340,Width=550,Text=UiText.T("DeepSeek API Key · 选择当前条目，或输入名称和新密钥","DeepSeek API Key · Select a profile or enter a name and key") });
+                keyEditor=new KeyEditor(); keyEditor.SetBounds(28,367,555,58); Controls.Add(keyEditor);
+                ok.Location = new Point(380, 440); cancel.Location = new Point(472, 440);
             }
             AcceptButton = ok;
             CancelButton = cancel;
@@ -171,6 +174,7 @@ namespace SWBodyOrganizer
             if (showShortcuts && DialogResult == DialogResult.OK)
             {
                 string error = ShortcutBinding.Validate(locateKey.Shortcut, dedupKey.Shortcut);
+                if (error.Length == 0) { try { keyEditor.Commit(); } catch(Exception ex) { error=ex.Message; } }
                 if (error.Length > 0) { shortcutError.Text = error; e.Cancel = true; DialogResult = DialogResult.None; }
             }
             base.OnFormClosing(e);

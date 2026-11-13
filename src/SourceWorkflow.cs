@@ -110,7 +110,7 @@ namespace SWBodyOrganizer
         {
             if (worker.IsBusy || project.Sources.Count == 0) return;
             if (MessageBox.Show(this, UiText.T("将保存当前项目源零件在 SolidWorks 中的修改并重新读取。命名、分类及勾选状态将按实体身份恢复。\n\n若文件已另存到新位置，请先使用“重新关联”。是否继续？", "Save changes to the project's open source parts and rescan, preserving edits by body identity? Relink first if saved to a new location."), "Master Miao", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-            StartScan(true);
+            StartScan();
         }
     }
 }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -195,7 +195,7 @@ namespace SWBodyOrganizer
             actions.Controls.Add(MakeButton("打开 SolidWorks", OpenSolidWorksManually));
             actions.Controls.Add(MakeButton("重新读取", delegate { StartScan(); }));
             actions.Controls.Add(MakeButton(UiText.T("保存源文件并重读", "Save sources and rescan"), SaveSourcesAndRescan));
-            actions.Controls.Add(MakeButton("设置", OpenSettings));
+
             Button sidebar = MakeButton("侧栏", delegate { if (workArea != null) workArea.Panel2Collapsed = !workArea.Panel2Collapsed; });
             toolTip.SetToolTip(sidebar, "显示或收起预览 / 分类侧栏，扩大列表空间。\nShow or hide the preview/category sidebar for a wider list.");
             actions.Controls.Add(sidebar);
@@ -242,8 +242,8 @@ namespace SWBodyOrganizer
         private Control BuildBodyPanel()
         {
             Panel panel = Card();
-            TableLayoutPanel bar = new TableLayoutPanel { Dock = DockStyle.Top, Height = 152, BackColor = Color.White, ColumnCount = 1, RowCount = 4 };
-            foreach (int height in new[] { 32, 40, 40, 40 }) bar.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+            TableLayoutPanel bar = new TableLayoutPanel { Dock = DockStyle.Top, Height = 190, BackColor = Color.White, ColumnCount = 1, RowCount = 5 };
+            foreach (int height in new[] { 32, 40, 38, 40, 40 }) bar.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
             Label title = SectionTitle("实体列表");
             title.Dock = DockStyle.Left;
             countLabel.AutoSize = false;
@@ -301,8 +301,9 @@ namespace SWBodyOrganizer
             heading.Controls.Add(countLabel); heading.Controls.Add(title);
             bar.Controls.Add(heading, 0, 0);
             bar.Controls.Add(filterBar, 0, 1);
-            bar.Controls.Add(actions, 0, 2);
-            bar.Controls.Add(secondary, 0, 3);
+            bar.Controls.Add(BuildNamingDefaults(), 0, 2);
+            bar.Controls.Add(actions, 0, 3);
+            bar.Controls.Add(secondary, 0, 4);
             bodyGrid.Dock = DockStyle.Fill;
             panel.Controls.Add(bodyGrid);
             BuildEmptyState();
@@ -736,16 +737,16 @@ namespace SWBodyOrganizer
             if (added > 0) { MarkProjectDirty(); StartScan(); }
         }
 
-        private void StartScan(bool saveSources = false)
+        private void StartScan()
         {
             if (worker.IsBusy || project.Sources.Count == 0) return;
-            if (!ConfirmSolidWorksTask(UiText.T("读取", "scan"), UiText.T("读取实体并生成三视图", "read bodies and generate three projections"), true)) return;
+            if (!ConfirmSolidWorksTask(UiText.T("读取", "scan"), UiText.T("读取实体、生成预览并保存源零件", "read bodies, generate previews and save source parts"), true)) return;
             CommitGrid();
             if (!BackupBeforeSourceChange()) return;
             WorkerRequest request = new WorkerRequest
             {
                 Operation = "scan",
-                SaveSourcesBeforeScan = saveSources,
+                SaveSourcesBeforeScan = true,
                 CacheRoot = AppPaths.Cache,
                 GeneratePreviews = true,
                 KeepSourceDocumentsOpen = true,
@@ -766,7 +767,8 @@ namespace SWBodyOrganizer
                 else
                 {
                     List<SourceRecord> pendingSave = response.Sources.Where(source => (source.Message ?? "").Contains("未保存")).ToList();
-                    if (pendingSave.Count > 0) MessageBox.Show(this, string.Join("\n", pendingSave.Select(source => source.Name + "：" + source.Message).ToArray()), UiText.T("已读取，导出前需要保存", "Scanned; save before exporting"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    if (pendingSave.Count > 0)
+                        progressLabel.Text = response.Message + " " + string.Join("；", pendingSave.Select(source => source.Name + "：" + source.Message));
                 }
             });
         }

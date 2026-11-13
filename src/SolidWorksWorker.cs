@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -73,7 +73,6 @@ namespace SWBodyOrganizer
                 }
                 else if (string.Equals(request.Operation, "scan", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (request.SaveSourcesBeforeScan) SourceDocuments.SaveSources(app, request.Sources);
                     Scan(app, request, response);
                     if (ShouldKeepScanSession(request, response))
                     {
@@ -505,7 +504,8 @@ namespace SWBodyOrganizer
                     source.Path = Path.GetFullPath(source.Path);
                     source.ContentSha256 = ExportIntegrity.FileHash(source.Path);
                     int openErrors = 0, openWarnings = 0;
-                    int options = (int)swOpenDocOptions_e.swOpenDocOptions_Silent | (int)swOpenDocOptions_e.swOpenDocOptions_ReadOnly;
+                    int options = (int)swOpenDocOptions_e.swOpenDocOptions_Silent;
+                    if (!request.SaveSourcesBeforeScan) options |= (int)swOpenDocOptions_e.swOpenDocOptions_ReadOnly;
                     Emit("PROGRESS", Percent(fileIndex, request.Sources.Count, 5), "读取文件", source.Name);
                     model = SourceDocuments.FindOpen(app, source.Path);
                     wasAlreadyOpen = model != null;
@@ -568,7 +568,7 @@ namespace SWBodyOrganizer
                         finally { Release(body); }
                     }
                     ExportIntegrity.VerifySourceFile(source.Path, source.ContentSha256);
-                    if (request.SaveSourcesBeforeScan && model.GetSaveFlag())
+                    if (request.SaveSourcesBeforeScan)
                     {
                         // Reading references and generating previews can finish a
                         // deferred rebuild. Complete the explicitly requested save
@@ -1002,6 +1002,7 @@ namespace SWBodyOrganizer
 
             string token = Guid.NewGuid().ToString("N");
             string stageSldprt = Path.Combine(request.StagingRoot, token + ".SLDPRT");
+            var holeMarks=new SplitHoleMarks(app,body);
             try
             {
                 try
@@ -1018,6 +1019,7 @@ namespace SWBodyOrganizer
                     int activateErrors = 0;
                     app.ActivateDoc3(targetTitle, false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, ref activateErrors);
                     EnsureActiveDocument(app, targetTitle, "保存拆分零件");
+                    holeMarks.Apply(target);
                     extension = target.Extension;
                     int errors = 0, warnings = 0;
                     bool saved = extension.SaveAs(stageSldprt, (int)swSaveAsVersion_e.swSaveAsCurrentVersion, (int)swSaveAsOptions_e.swSaveAsOptions_Silent, null, ref errors, ref warnings);
@@ -1037,7 +1039,7 @@ namespace SWBodyOrganizer
                 }
 
                 CheckCancellation(request.CancelFile);
-                VerifySingleBody(app, stageSldprt, body);
+                VerifySingleBody(app, stageSldprt, body,holeMarks);
                 result.VerificationStatus = result.SldprtVerification = "几何验证通过";
                 ExportIntegrity.VerifySourceFile(plan.SourcePath, plan.SourceSha256);
                 ExportIntegrity.VerifyMemory(sourceModel, plan.Configuration);
@@ -1231,7 +1233,7 @@ namespace SWBodyOrganizer
             }
         }
 
-        private static void VerifySingleBody(ISldWorks app, string path, IBody2 expected)
+        private static void VerifySingleBody(ISldWorks app, string path, IBody2 expected, SplitHoleMarks holeMarks)
         {
             IModelDoc2 model = null;
             IPartDoc part = null;
@@ -1251,6 +1253,7 @@ namespace SWBodyOrganizer
                 bodies = part.GetBodies2((int)swBodyType_e.swSolidBody, false) as object[];
                 if (bodies == null || bodies.Length != 1) throw new InvalidOperationException("导出文件没有通过单实体验证。");
                 ExportIntegrity.VerifyGeometry(expected, (IBody2)bodies[0]);
+                holeMarks.Verify((IBody2)bodies[0]);
             }
             finally
             {

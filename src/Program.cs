@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -11,9 +11,9 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("读取、预览、分类并安全导出 SolidWorks 多实体零件与原位装配体")]
 [assembly: AssemblyCompany("Master Miao")]
 [assembly: AssemblyProduct("Master Miao")]
-[assembly: AssemblyVersion("1.2.6.0")]
-[assembly: AssemblyFileVersion("1.2.6.5")]
-[assembly: AssemblyInformationalVersion("1.2.6-0922-R5")]
+[assembly: AssemblyVersion("1.4.0.0")]
+[assembly: AssemblyFileVersion("1.4.0.0")]
+[assembly: AssemblyInformationalVersion("1.3.2-hole-leaders-preview")]
 [assembly: ComVisible(false)]
 
 namespace SWBodyOrganizer
@@ -46,6 +46,7 @@ namespace SWBodyOrganizer
         {
             AppPaths.Ensure();
             UserSettingsStore.Load();
+            if (args.Length == 2 && args[0] == "--modules-selftest") return WorkspaceSelfTest.Run(args[1]);
             if (string.IsNullOrWhiteSpace(UserSettingsStore.Current.Language)) UserSettingsStore.Current.Language = "zh-CN";
             if (args.Length == 3 && string.Equals(args[0], "--worker", StringComparison.OrdinalIgnoreCase))
                 return WorkerMain.Run(args[1], args[2]);
@@ -105,7 +106,7 @@ namespace SWBodyOrganizer
                     using (LanguageDialog language = new LanguageDialog(true))
                         if (language.ShowDialog() == DialogResult.OK) language.ApplySelection();
                 }
-                Application.Run(new MainForm());
+                Application.Run(new WorkspaceShell());
                 return 0;
             }
             catch (Exception ex)

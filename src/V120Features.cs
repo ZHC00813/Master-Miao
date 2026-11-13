@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -268,13 +268,13 @@ namespace SWBodyOrganizer
             UpdateWindowTitle();
         }
 
-        private void OpenSettings(object sender, EventArgs e)
+        internal void RefreshAfterSettings()
         {
             if (worker.IsBusy) return;
-            using (LanguageDialog dialog = new LanguageDialog(false))
+
             {
-                if (dialog.ShowDialog(this) != DialogResult.OK) return;
-                dialog.ApplySelection();
+
+
                 ApplyLanguage();
                 DisposeGridImages(); DisposeThumbnailCache();
                 RefreshSources();
@@ -427,7 +427,7 @@ namespace SWBodyOrganizer
             }
             using (CategoryChoiceDialog dialog = new CategoryChoiceDialog(project.Categories))
             {
-                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
                 CommitGrid();
                 RememberUndo();
                 foreach (BodyRecord body in selected)
@@ -824,6 +824,16 @@ namespace SWBodyOrganizer
         private readonly PictureBox front = CreateView();
         private readonly PictureBox top = CreateView();
         private readonly ImeSafeNameTextBox exportName = new ImeSafeNameTextBox();
+        private readonly CheckBox usePrefix=new CheckBox {AutoSize=true};
+        private readonly CheckBox useSuffix=new CheckBox {AutoSize=true};
+        private readonly Label previewName=new Label { Dock=DockStyle.Fill,AutoEllipsis=true,TextAlign=ContentAlignment.MiddleLeft };
+        private string prefixValue, suffixValue;
+        private string PreviewStem()
+        {
+            string stem=string.IsNullOrWhiteSpace(exportName.Text)?"Part_"+(bodies[index].Index+1):exportName.Text.Trim();
+            return NameRules.SafeStem((usePrefix.Checked?prefixValue:"")+stem+(useSuffix.Checked?suffixValue:""),"Part_"+(bodies[index].Index+1));
+        }
+        private void UpdatePreview() { if(!loading && bodies.Count>0) previewName.Text=PreviewStem(); }
         private readonly ComboBox category = new ComboBox();
         private readonly CheckBox selected = new CheckBox();
         private readonly Label progress = new Label();
@@ -849,7 +859,7 @@ namespace SWBodyOrganizer
             TableLayoutPanel root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(12) };
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 148));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 190));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
             progress.Dock = DockStyle.Fill; progress.Font = new Font(Font, FontStyle.Bold); progress.TextAlign = ContentAlignment.MiddleLeft;
             Panel summary = new Panel { Dock = DockStyle.Fill, Padding = new Padding(6, 0, 6, 8) };
@@ -864,7 +874,7 @@ namespace SWBodyOrganizer
             views.Controls.Add(Wrap(UiText.T("上视图", "Top"), top), 2, 0);
             root.Controls.Add(views, 0, 1);
 
-            TableLayoutPanel editor = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(12), ColumnCount = 4, RowCount = 3 };
+            TableLayoutPanel editor = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(12), ColumnCount = 4, RowCount = 4 };
             editor.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116)); editor.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 48)); editor.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132)); editor.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
             editor.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); editor.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); editor.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
             editor.Controls.Add(LabelFor(UiText.T("导出名称", "Export name")), 0, 0); exportName.Dock = DockStyle.Fill; editor.Controls.Add(exportName, 1, 0);
@@ -876,6 +886,15 @@ namespace SWBodyOrganizer
             // commits all three values together, avoiding a mixture of live combo-box
             // events, autosave ticks and stale list rows.
             details.Dock = DockStyle.Fill; details.ForeColor = Color.FromArgb(58, 64, 73); details.AutoEllipsis = true; editor.Controls.Add(details, 2, 2); editor.SetColumnSpan(details, 2);
+            editor.RowStyles.Add(new RowStyle(SizeType.Absolute,40));
+            var affixes=new FlowLayoutPanel {Dock=DockStyle.Fill,WrapContents=false,AutoScroll=true};
+            affixes.Controls.Add(usePrefix);affixes.Controls.Add(useSuffix);
+            editor.Controls.Add(affixes,0,3);editor.SetColumnSpan(affixes,2);
+            editor.Controls.Add(LabelFor(UiText.T("文件名预览","Filename preview")),2,3);
+            editor.Controls.Add(previewName,3,3);
+            exportName.TextChanged+=(s,e)=>UpdatePreview();
+            usePrefix.CheckedChanged+=(s,e)=>UpdatePreview();
+            useSuffix.CheckedChanged+=(s,e)=>UpdatePreview();
             root.Controls.Add(editor, 0, 2);
 
             FlowLayoutPanel buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = new Padding(0, 7, 0, 0) };
@@ -909,7 +928,13 @@ namespace SWBodyOrganizer
             loading = true;
             BodyRecord body = bodies[index];
             SetView(iso, body.PreviewIso); SetView(front, body.PreviewFront); SetView(top, body.PreviewTop);
-            exportName.Text = body.ExportName; category.SelectedValue = body.CategoryId; selected.Checked = body.ExportSelected;
+            prefixValue=body.AppliedPrefix ?? UserSettingsStore.Current?.CommonPrefix ?? "";
+            suffixValue=body.AppliedSuffix ?? UserSettingsStore.Current?.CommonSuffix ?? "";
+            usePrefix.Text=UiText.T("使用前缀","Prefix")+" "+prefixValue;
+            useSuffix.Text=UiText.T("使用后缀","Suffix")+" "+suffixValue;
+            usePrefix.Enabled=prefixValue.Length>0; useSuffix.Enabled=suffixValue.Length>0;
+            usePrefix.Checked=body.AppliedPrefix!=null; useSuffix.Checked=body.AppliedSuffix!=null;
+            exportName.Text = body.NamingBase ?? body.ExportName; previewName.Text=PreviewStem(); category.SelectedValue = body.CategoryId; selected.Checked = body.ExportSelected;
             List<BodyRecord> group = groupProvider(body);
             int classified = bodies.Count(item => item.CategoryId != CategoryNode.UnclassifiedId);
             classificationProgress.Maximum = Math.Max(1, bodies.Count); classificationProgress.Value = classified;
@@ -924,16 +949,18 @@ namespace SWBodyOrganizer
         {
             if (loading || bodies.Count == 0) return;
             BodyRecord body = bodies[index];
-            string name = NameRules.SafeStem(exportName.Text, "Part_" + (body.Index + 1));
+            string name=PreviewStem();
+            string prefix=usePrefix.Checked?prefixValue:null, suffix=useSuffix.Checked?suffixValue:null;
+            string nameBase=prefix!=null || suffix!=null ? exportName.Text.Trim() : null;
             string categoryId = saveCategory ? (Convert.ToString(category.SelectedValue) ?? CategoryNode.UnclassifiedId) : body.CategoryId;
             List<BodyRecord> members = groupProvider(body).ToList();
-            bool modelChanged = members.Any(member => member.ExportName != name || member.CategoryId != categoryId || member.ExportSelected != selected.Checked);
+            bool modelChanged = members.Any(member => member.ExportName != name || member.AppliedPrefix!=prefix || member.AppliedSuffix!=suffix || member.NamingBase!=nameBase || member.CategoryId != categoryId || member.ExportSelected != selected.Checked);
             bool outputChanged = !string.Equals(project.OutputRoot ?? string.Empty, output.Text.Trim(), StringComparison.Ordinal);
             if (!modelChanged && !outputChanged) return;
             beforeChange();
             foreach (BodyRecord member in members)
             {
-                member.ExportName = name; member.CategoryId = categoryId; member.ExportSelected = selected.Checked;
+                member.ExportName = name; member.AppliedPrefix=prefix; member.AppliedSuffix=suffix; member.NamingBase=nameBase; member.CategoryId = categoryId; member.ExportSelected = selected.Checked;
             }
             project.OutputRoot = output.Text.Trim();
             project.GuidedIndex = index;

@@ -1,11 +1,13 @@
 param(
     [string]$SolidWorksApiPath = $env:MASTER_MIAO_SW_API,
-    [string]$OutputDirectory = 'build'
+    [string]$OutputDirectory = 'build',
+    [string]$DotNetPath = 'dotnet',
+    [string]$PackageSource
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $compiler = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-$swApi = if ([string]::IsNullOrWhiteSpace($SolidWorksApiPath)) { 'C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\api\redist' } else { [IO.Path]::GetFullPath($SolidWorksApiPath) }
+$swApi = if ([string]::IsNullOrWhiteSpace($SolidWorksApiPath)) { Join-Path $projectRoot 'modules\HoleTools\dependencies\SolidWorks.Interop' } else { [IO.Path]::GetFullPath($SolidWorksApiPath) }
 $output = Join-Path $projectRoot $OutputDirectory
 $macroSource = Join-Path $projectRoot 'macro\StepMacro.cs'
 $iconSource = Join-Path $projectRoot 'assets\MasterMiao-logo.png'
@@ -33,21 +35,18 @@ $macroArguments = @(
 & $compiler $macroArguments
 if ($LASTEXITCODE -ne 0) { throw "Macro build failed with exit code $LASTEXITCODE." }
 
-$sources = Get-ChildItem -LiteralPath (Join-Path $projectRoot 'src') -Filter '*.cs' | Select-Object -ExpandProperty FullName
-$arguments = @(
-    '/nologo', '/target:winexe', '/platform:x64', '/optimize+',
-    ('/out:' + (Join-Path $output 'MasterMiao.exe')),
-    ('/win32icon:' + $iconOutput),
-    '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Drawing.dll',
-    '/reference:System.Windows.Forms.dll', '/reference:System.Web.Extensions.dll',
-    '/reference:System.IO.Compression.dll', '/reference:System.IO.Compression.FileSystem.dll',
-    ('/reference:' + (Join-Path $swApi 'SolidWorks.Interop.sldworks.dll')),
-    ('/reference:' + (Join-Path $swApi 'SolidWorks.Interop.swconst.dll'))
-) + $sources
-
-& $compiler $arguments
-if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE."
-}
+$env:DOTNET_CLI_HOME = Join-Path $projectRoot '.build-home'
+$env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+$env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'
+$env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH = 'false'
+$env:APPDATA = Join-Path $projectRoot 'modules\HoleTools\portable-profile'
+$project = Join-Path $projectRoot 'MasterMiao.csproj'
+$restore = @('restore', $project, ('--property:SolidWorksInteropDir=' + $swApi), '--property:Platform=x64')
+if ($PackageSource) { $restore += @('--source', $PackageSource) }
+& $DotNetPath $restore
+if ($LASTEXITCODE -ne 0) { throw 'Module restore failed. A .NET SDK and .NET Framework 4.8 reference assemblies are required.' }
+& $DotNetPath build $project --no-restore -c Release --property:Platform=x64 "--property:SolidWorksInteropDir=$swApi" "--property:OutputPath=$output\"
+if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE." }
 foreach ($assembly in @('SolidWorks.Interop.sldworks.dll', 'SolidWorks.Interop.swconst.dll')) {
     $sourceAssembly = Join-Path $swApi $assembly
     $targetAssembly = Join-Path $output $assembly

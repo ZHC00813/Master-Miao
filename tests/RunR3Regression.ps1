@@ -7,7 +7,7 @@ if (-not $BinaryDirectory) { $BinaryDirectory = Join-Path $sourceRoot 'build' }
 $binaryRoot = [IO.Path]::GetFullPath($BinaryDirectory)
 $runtime = Join-Path $testRoot 'runtime'
 New-Item -ItemType Directory -Path $runtime | Out-Null
-foreach ($name in @('MasterMiao.exe','MasterMiao.exe.config','MasterMiao.ico','MasterMiao.StepMacro.dll','SolidWorks.Interop.sldworks.dll','SolidWorks.Interop.swconst.dll')) {
+foreach ($name in @('MasterMiao.exe','MasterMiao.exe.config','MasterMiao.ico','MasterMiao.StepMacro.dll','SolidWorks.Interop.sldworks.dll','SolidWorks.Interop.swconst.dll','SolidWorks.Interop.swpublished.dll','Blankedge.SWHoleTools.dll','Blankedge.SWHoleTools.BatchExporter.exe','Blankedge.SWHoleTools.BatchExporter.exe.config')) {
     Copy-Item -LiteralPath (Join-Path $binaryRoot $name) -Destination $runtime
 }
 $compiler = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
@@ -17,6 +17,7 @@ function Compile-Test([string]$name, [string[]]$references, [string[]]$extraSour
     $arguments += $references | ForEach-Object { '/reference:' + $_ }
     & $compiler ($arguments + (Join-Path $sourceRoot ('tests\' + $name + '.cs')) + $extraSources)
     if ($LASTEXITCODE -ne 0) { throw "$name compilation failed" }
+    Copy-Item -LiteralPath (Join-Path $sourceRoot 'MasterMiao.exe.config') -Destination (Join-Path $runtime ($name + '.exe.config'))
 }
 function Run-Test([string]$name, [string[]]$arguments = @()) {
     & (Join-Path $runtime ($name + '.exe')) $arguments | Tee-Object -FilePath (Join-Path $testRoot ($name + '.txt'))

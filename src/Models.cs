@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -89,7 +89,19 @@ namespace SWBodyOrganizer
         public string ConfirmedDuplicateGroupId { get; set; }
         public bool CandidateSuppressed { get; set; }
         public string OriginalName { get; set; }
-        public string ExportName { get; set; }
+        private string exportName;
+        public string ExportName
+        {
+            get { return exportName; }
+            set { if (exportName != value) { NamingBase=null; AppliedPrefix=null; AppliedSuffix=null; } exportName=value; }
+        }
+        public string NamingBase { get; set; }
+        public string AppliedPrefix { get; set; }
+        public string AppliedSuffix { get; set; }
+        public void CopyNaming(BodyRecord source)
+        {
+            ExportName=source.ExportName; NamingBase=source.NamingBase; AppliedPrefix=source.AppliedPrefix; AppliedSuffix=source.AppliedSuffix;
+        }
         public string CategoryId { get; set; }
         public bool ExportSelected { get; set; }
         public string PreviewFront { get; set; }
@@ -464,6 +476,8 @@ namespace SWBodyOrganizer
         public int ListZoomPercent { get; set; }
         public string LastOutputRoot { get; set; }
         public string LastProjectPath { get; set; }
+        public string CommonPrefix { get; set; }
+        public string CommonSuffix { get; set; }
         public List<string> RecentProjects { get; set; }
         public int LocateShortcut { get; set; }
         public int DeduplicateShortcut { get; set; }

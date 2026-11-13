@@ -56,6 +56,7 @@ internal static class VerifyLocationIdentity
             IModelDoc2 model = Mock<IModelDoc2>((call, args) => {
                 if (call.MethodName == "get_Extension") return extension;
                 if (call.MethodName == "GetSaveFlag") { dirtyRead = true; return true; }
+                if (call.MethodName == "GetPathName") return @"Z:\nonexistent-source.SLDPRT";
                 throw new Exception("Unexpected document operation: " + call.MethodName);
             });
             ISldWorks app = Mock<ISldWorks>((call, args) => {

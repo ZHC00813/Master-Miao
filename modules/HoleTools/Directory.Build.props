@@ -1,0 +1,15 @@
+<Project>
+  <!--
+    Prefer an explicitly supplied SOLIDWORKS path, then a normal local installation,
+    and finally the portable Interop copy shipped in the private development pack.
+  -->
+  <PropertyGroup Condition="'$(SolidWorksInstallDir)' == '' and Exists('C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS')">
+    <SolidWorksInstallDir>C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS</SolidWorksInstallDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(SolidWorksInteropDir)' == '' and '$(SolidWorksInstallDir)' != ''">
+    <SolidWorksInteropDir>$(SolidWorksInstallDir)\api\redist</SolidWorksInteropDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(SolidWorksInteropDir)' == '' and Exists('$(MSBuildThisFileDirectory)dependencies\SolidWorks.Interop\SolidWorks.Interop.sldworks.dll')">
+    <SolidWorksInteropDir>$(MSBuildThisFileDirectory)dependencies\SolidWorks.Interop</SolidWorksInteropDir>
+  </PropertyGroup>
+</Project>

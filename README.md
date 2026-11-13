@@ -1,5 +1,9 @@
 # MasterMiao V1.2.6 · 0922-R5
 
+**[下载喵师傅 1.4.0 Windows x64 安装程序](https://github.com/ZHC00813/Master-Miao/raw/refs/heads/main/releases/v1.4.0/MasterMiao-1.4.0-Setup-x64.exe)**
+
+本版包含多实体导出、自动工程图、孔标签分组与 AI 助手。安装后从左侧设置管理快捷键和 DeepSeek API Key，从孔标注助手部署 SolidWorks 插件。
+
 SolidWorks 多实体零件整理工具：读取、三视图预览、命名、分类，导出独立零件、STEP 和原位装配体。
 
 [English](README.en.md) · [下载 R5 完整版](https://github.com/ZHC00813/Master-Miao/releases/tag/v1.2.6-0922-R5) · [修复与验证](R5_FIX_NOTES.md) · [发布说明](RELEASE_NOTES_R5.md)
