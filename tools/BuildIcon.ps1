@@ -26,7 +26,37 @@ try {
 
             $stream = New-Object System.IO.MemoryStream
             try {
-                $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
+                # Icon.ToBitmap in the .NET Framework UI does not reliably
+                # decode PNG-backed icon frames. Use a 32-bit DIB with alpha
+                # and a DWORD-aligned AND mask for every size instead.
+                $dib = New-Object System.IO.BinaryWriter($stream)
+                $maskStride = [int]([Math]::Ceiling($size / 32.0) * 4)
+                $dib.Write([UInt32]40)
+                $dib.Write([Int32]$size)
+                $dib.Write([Int32]($size * 2))
+                $dib.Write([UInt16]1)
+                $dib.Write([UInt16]32)
+                $dib.Write([UInt32]0)
+                $dib.Write([UInt32]($size * $size * 4))
+                foreach ($unused in 1..4) { $dib.Write([UInt32]0) }
+                for ($y = $size - 1; $y -ge 0; $y--) {
+                    for ($x = 0; $x -lt $size; $x++) {
+                        $pixel = $bitmap.GetPixel($x, $y)
+                        $dib.Write([Byte]$pixel.B); $dib.Write([Byte]$pixel.G)
+                        $dib.Write([Byte]$pixel.R); $dib.Write([Byte]$pixel.A)
+                    }
+                }
+                for ($y = $size - 1; $y -ge 0; $y--) {
+                    $mask = New-Object byte[] $maskStride
+                    for ($x = 0; $x -lt $size; $x++) {
+                        if ($bitmap.GetPixel($x, $y).A -eq 0) {
+                            $index = [int][Math]::Floor($x / 8.0)
+                            $mask[$index] = $mask[$index] -bor (128 -shr ($x % 8))
+                        }
+                    }
+                    $dib.Write($mask)
+                }
+                $dib.Flush()
                 $frames.Add($stream.ToArray())
             }
             finally { $stream.Dispose() }

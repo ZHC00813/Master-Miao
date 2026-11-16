@@ -10,6 +10,7 @@ Copy-Item $hostExe "$out/Core/MasterMiao.exe"
 Copy-Item $RuntimeDirectory "$out/PcbRuntime" -Recurse
 Copy-Item "$PSScriptRoot/pcb-step-simplifier" "$out/PcbEngine" -Recurse
 Copy-Item "$PSScriptRoot/MasterMiao.exe.config" "$out/MasterMiao.exe.config" -Force
+& (Join-Path $PSScriptRoot '../../tools/BuildIcon.ps1') -Source (Join-Path $PSScriptRoot '../../assets/MasterMiao-symbol.png') -Destination "$out/MasterMiao.ico"
 $csc=Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 & $csc /nologo /target:library /platform:x64 /optimize+ "/out:$out/MasterMiao.Pcb.dll" "/reference:$out/Core/MasterMiao.exe" /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll (Join-Path $PSScriptRoot 'PcbModule.cs')
 if($LASTEXITCODE){throw 'PCB module compilation failed'}

@@ -1,0 +1,22 @@
+name: Publish verified Master Miao 1.4.8
+on:
+  push:
+    branches: [main]
+    paths: ['releases/v1.4.8/**', '.github/workflows/publish-148.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify installer checksum
+        working-directory: releases/v1.4.8
+        run: sha256sum -c SHA256SUMS.txt
+      - name: Publish verified installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view v1.4.8 >/dev/null 2>&1 || gh release create v1.4.8 --target "$GITHUB_SHA" --title "喵师傅 1.4.8 — Logo显示修复" --notes-file releases/v1.4.8/README.md
+          gh release upload v1.4.8 releases/v1.4.8/MasterMiao-1.4.8-Setup-x64.exe releases/v1.4.8/SHA256SUMS.txt --clobber
