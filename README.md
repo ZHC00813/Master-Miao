@@ -1,3 +1,5 @@
+当前安装版本：**[1.4.7 — PCB模型轻量化](releases/v1.4.7/README.md)**。包含经验证的1.4.6核心与新增PCB模块；根目录历史主程序源码版本说明见该发布页。
+
 # 喵师傅 Master Miao 1.4.1
 
 **[下载喵师傅 1.4.1 Windows x64 安装程序](https://github.com/ZHC00813/Master-Miao/raw/refs/heads/main/releases/v1.4.1/MasterMiao-1.4.1-Setup-x64.exe)**

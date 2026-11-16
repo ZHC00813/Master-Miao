@@ -1,0 +1,22 @@
+name: Publish verified Master Miao 1.4.7
+on:
+  push:
+    branches: [main]
+    paths: ['releases/v1.4.7/**', '.github/workflows/publish-147.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify installer checksum
+        working-directory: releases/v1.4.7
+        run: sha256sum -c SHA256SUMS.txt
+      - name: Publish verified installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view v1.4.7 >/dev/null 2>&1 || gh release create v1.4.7 --target "$GITHUB_SHA" --title "喵师傅 1.4.7 — PCB模型轻量化" --notes-file releases/v1.4.7/README.md
+          gh release upload v1.4.7 releases/v1.4.7/MasterMiao-1.4.7-Setup-x64.exe releases/v1.4.7/SHA256SUMS.txt --clobber

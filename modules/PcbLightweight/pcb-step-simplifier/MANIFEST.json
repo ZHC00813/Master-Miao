@@ -1,0 +1,56 @@
+{
+  "name": "pcb-step-simplifier",
+  "version": "1.1.0-preview",
+  "files": [
+    {
+      "path": "agents/openai.yaml",
+      "bytes": 278,
+      "sha256": "22bed5884db379018b3fe22f68833a0aa93430c80ec67efe65fa0a7927de4518"
+    },
+    {
+      "path": "docs/integration.md",
+      "bytes": 4824,
+      "sha256": "d8014e8ea8ac13b6c76a19e8fc236084ead18df4a455fe05abc9104c50bae46f"
+    },
+    {
+      "path": "docs/mastermiao.md",
+      "bytes": 829,
+      "sha256": "817399c88441e9a09e5a7ff8e9dcc6d3aea350a84e46bd74739fb1b3dbcd69ac"
+    },
+    {
+      "path": "examples/module_adapter.py",
+      "bytes": 2249,
+      "sha256": "12ce872938ce19ba3250046a9243e1be9d43c0175c69344a00570999df652f6c"
+    },
+    {
+      "path": "README.md",
+      "bytes": 4194,
+      "sha256": "3fb6535a3c7783dd1b2ebd5a6ba280e97ed30d28ecb3b17244cd8e7d29fc8409"
+    },
+    {
+      "path": "references/validation.md",
+      "bytes": 2450,
+      "sha256": "6b221e7abb968c47b3d7fa3f0966fe08af7a161c9537338a8181ccedb99f81be"
+    },
+    {
+      "path": "requirements.txt",
+      "bytes": 81,
+      "sha256": "9595f81f53c7713ed1a4578c957041c5ca61ecbf3736304287164af5fc1c7dd2"
+    },
+    {
+      "path": "scripts/pcb_simplify.py",
+      "bytes": 22768,
+      "sha256": "e3922137886b8dfb5c96c60df0e84ffdf9d1b53209a67a198f611a9a75159fc6"
+    },
+    {
+      "path": "SKILL.md",
+      "bytes": 5078,
+      "sha256": "1131dff988899b2f113fe63d94f4b5092aefc8b0fd2237edc659ebd645044131"
+    },
+    {
+      "path": "tests/smoke_test.py",
+      "bytes": 5538,
+      "sha256": "afb3f43cf640d50058a1695e0009a08384e6497f38346fbbb0b072a504fbf986"
+    }
+  ]
+}

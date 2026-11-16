@@ -1,0 +1,4 @@
+interface:
+  display_name: "电路板模型轻量化"
+  short_description: "保留主要接口与大元件，自动简化 PCB 小元件并检查单实体 STEP"
+  default_prompt: "使用 $pcb-step-simplifier 简化我提供的电路板模型，保留主要接口和大元件。"
