@@ -64,7 +64,7 @@ namespace MasterMiao.Pcb
   readonly ComboBox shape=new ComboBox { DropDownStyle=ComboBoxStyle.DropDownList,Width=140 };
   readonly Button apply=new Button { Text="应用规则到清单",AutoSize=true };
   readonly Button all=new Button { Text="保留全部细节",AutoSize=true };
-  readonly Label summary=new Label { Dock=DockStyle.Fill,Text="先导入文件并分析。原始模型保持不变。",AutoEllipsis=true,TextAlign=ContentAlignment.MiddleLeft };
+  readonly Label summary=new Label { Dock=DockStyle.Fill,Text="将 STEP / STP 文件拖入此页面，或点击导入按钮，然后分析元件。原始模型保持不变。",AutoEllipsis=true,TextAlign=ContentAlignment.MiddleLeft };
   readonly TextBox log=new TextBox { Multiline=true,ReadOnly=true,Dock=DockStyle.Fill,ScrollBars=ScrollBars.Vertical };
   readonly DataGridView grid=new DataGridView { Dock=DockStyle.Fill,AllowUserToAddRows=false,AllowUserToDeleteRows=false,AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.Fill,RowHeadersVisible=false,BackgroundColor=Color.White,SelectionMode=DataGridViewSelectionMode.FullRowSelect,MultiSelect=true };
   Dictionary<string,object> plan; string job,result; Process process; bool canceled,nativeBusy;
@@ -90,7 +90,8 @@ namespace MasterMiao.Pcb
    grid.Columns.Add(new DataGridViewCheckBoxColumn {Name="review",HeaderText="待人工确认",FillWeight=65});
    grid.CurrentCellDirtyStateChanged+=(s,e)=>{if(grid.IsCurrentCellDirty)grid.CommitEdit(DataGridViewDataErrorContexts.Commit);};
    grid.CellValueChanged+=(s,e)=>{if(e.RowIndex>=0)UpdateSummary();};
-   pick.Click+=(s,e)=>{using(var d=new OpenFileDialog{Filter="PCB STEP 模型|*.step;*.stp"})if(d.ShowDialog(this)==DialogResult.OK){input.Text=d.FileName;plan=null;grid.Rows.Clear();build.Enabled=false;open.Enabled=false;summary.Text="点击分析元件，读取板体、接口及体积排名。";}};
+   pick.Click+=(s,e)=>{using(var d=new OpenFileDialog{Filter="PCB STEP 模型|*.step;*.stp"})if(d.ShowDialog(this)==DialogResult.OK)SelectInput(d.FileName);};
+   EnableFileDrop(this);
    repair.Enabled=false;connect.CheckedChanged+=(s,e)=>repair.Enabled=connect.Checked&&!Busy;
    analyze.Click+=async(s,e)=>await Analyze();build.Click+=async(s,e)=>await Build();
    apply.Click+=(s,e)=>{if(plan!=null){PcbRules.Apply(plan,(int)count.Value,ports.Checked,new[]{"auto","box","cylinder"}[shape.SelectedIndex],extreme.Checked);Populate();}};
@@ -100,6 +101,10 @@ namespace MasterMiao.Pcb
    cancel.Click+=(s,e)=>{canceled=true;if(nativeBusy){File.WriteAllText(Path.Combine(job,"native","cancel.flag"),"cancel");summary.Text="正在取消，当前几何操作结束后会关闭独立测试实例…";}else try{if(process!=null&&!process.HasExited)process.Kill();}catch(InvalidOperationException){}cancel.Enabled=false;};
    open.Click+=(s,e)=>{if(result!=null)Process.Start("explorer.exe",Quote(Path.GetDirectoryName(result)));};
   }
+  bool AcceptInput(string path){return !Busy&&File.Exists(path)&&(string.Equals(Path.GetExtension(path),".step",StringComparison.OrdinalIgnoreCase)||string.Equals(Path.GetExtension(path),".stp",StringComparison.OrdinalIgnoreCase));}
+  void SelectInput(string path){if(!AcceptInput(path))return;input.Text=Path.GetFullPath(path);plan=null;result=null;job=null;grid.Rows.Clear();log.Clear();build.Enabled=open.Enabled=swOpen.Enabled=false;summary.Text="已载入文件。点击分析元件，读取板体、接口及体积排名。";}
+  string DroppedFile(IDataObject data){if(data==null||!data.GetDataPresent(DataFormats.FileDrop))return null;var paths=data.GetData(DataFormats.FileDrop) as string[];return paths!=null&&paths.Length==1&&AcceptInput(paths[0])?paths[0]:null;}
+  void EnableFileDrop(Control target){target.AllowDrop=true;target.DragEnter+=(s,e)=>{e.Effect=DroppedFile(e.Data)!=null&&(e.AllowedEffect&DragDropEffects.Copy)!=0?DragDropEffects.Copy:DragDropEffects.None;};target.DragDrop+=(s,e)=>{var path=DroppedFile(e.Data);if(path!=null)SelectInput(path);};foreach(Control child in target.Controls)EnableFileDrop(child);}
   void SetBusy(bool value){Busy=value;pick.Enabled=analyze.Enabled=apply.Enabled=all.Enabled=grid.Enabled=count.Enabled=extreme.Enabled=ports.Enabled=shape.Enabled=connect.Enabled=repair.Enabled=!value;repair.Enabled=!value&&connect.Checked;ports.Enabled=!value&&!extreme.Checked;build.Enabled=!value&&plan!=null;cancel.Enabled=value;}
   static string Quote(string value) { return "\""+value.Replace("\"","\\\"")+"\""; }
   async Task Run(string args,string scriptName="pcb_simplify.py")
