@@ -28,16 +28,20 @@ namespace MasterMiao.Pcb
   public static readonly JavaScriptSerializer Json=new JavaScriptSerializer { MaxJsonLength=int.MaxValue };
   public static List<Dictionary<string,object>> Rows(Dictionary<string,object> plan) { return ((IEnumerable)plan["components"]).Cast<Dictionary<string,object>>().ToList(); }
   public static string Text(Dictionary<string,object> r,string k) { return r.ContainsKey(k)?Convert.ToString(r[k]):""; }
-  public static void Apply(Dictionary<string,object> plan,int n,bool protect,string shape)
+  public static void Apply(Dictionary<string,object> plan,int n,bool protect,string shape,bool extreme=false)
   {
    if(n<0)throw new ArgumentOutOfRangeException("n");
+   plan["simplification_mode"]=extreme?"extreme":"standard";
+   plan["retained_component_limit"]=n;
+   var ranked=Rows(plan).Where(r=>Convert.ToInt32(r["solid_count"])>0 && Text(r,"id")!=Text(plan,"board_id")).OrderByDescending(r=>Convert.ToDouble(r["volume_mm3"])).ThenBy(r=>Text(r,"id"),StringComparer.Ordinal).ToList();
+   for(int i=0;i<ranked.Count;i++)ranked[i]["extreme_rank"]=i+1;
    foreach(var r in Rows(plan))
    {
     if(Convert.ToInt32(r["solid_count"])==0)continue;
     string cat=Text(r,"category");
     // Unknown components stay preserved until reviewed individually.
     bool keep=cat=="board" || Convert.ToBoolean(r["review"]) || (cat=="interface"?protect:Convert.ToInt32(r["rank"])<=n);
-    r["action"]=keep?"keep":"envelope";r["simplify_shape"]=shape;
+    r["action"]=extreme?(Text(r,"id")==Text(plan,"board_id")?"keep":Convert.ToInt32(r["extreme_rank"])<=n?"envelope":"omit"):keep?"keep":"envelope";r["simplify_shape"]=shape;
    }
   }
  }
@@ -54,6 +58,7 @@ namespace MasterMiao.Pcb
   readonly CheckBox ports=new CheckBox { Text="保留重要接口原形",Checked=true,AutoSize=true };
 
 
+  readonly CheckBox extreme=new CheckBox { Text="极致轻量：接口也参与排名，仅保留前 N 个轮廓",AutoSize=true };
   readonly CheckBox connect=new CheckBox { Text="微小连接，合并为单一实体",Checked=false,AutoSize=true,Padding=new Padding(0,4,0,0) };
   readonly CheckBox repair=new CheckBox { Text="清理微小装饰细节（改善兼容性）",Checked=true,AutoSize=true,Padding=new Padding(10,4,0,0) };
   readonly ComboBox shape=new ComboBox { DropDownStyle=ComboBoxStyle.DropDownList,Width=140 };
@@ -70,10 +75,10 @@ namespace MasterMiao.Pcb
    Padding=new Padding(14);BackColor=Color.FromArgb(246,248,251);Font=new Font("Microsoft YaHei UI",9);
    shape.Items.AddRange(new object[]{"自动：圆柱 / 方形","全部长方体","全部圆柱"});shape.SelectedIndex=0;
    var layout=new TableLayoutPanel { Dock=DockStyle.Fill,RowCount=7,ColumnCount=1 };
-   foreach(int h in new[]{42,42,68,42})layout.RowStyles.Add(new RowStyle(SizeType.Absolute,h));
+   foreach(int h in new[]{42,76,68,48})layout.RowStyles.Add(new RowStyle(SizeType.Absolute,h));
    layout.RowStyles.Add(new RowStyle(SizeType.Percent,100));layout.RowStyles.Add(new RowStyle(SizeType.Absolute,105));layout.RowStyles.Add(new RowStyle(SizeType.Absolute,44));
    var files=new FlowLayoutPanel { Dock=DockStyle.Fill };files.Controls.AddRange(new Control[]{pick,input,analyze});
-   var options=new FlowLayoutPanel { Dock=DockStyle.Fill };options.Controls.AddRange(new Control[]{ports,new Label { Text="其他元件按体积保留前",AutoSize=true,Padding=new Padding(10,7,0,0)},count,new Label{Text="个原形",AutoSize=true,Padding=new Padding(0,7,8,0)},shape,apply,all});
+   var options=new FlowLayoutPanel { Dock=DockStyle.Fill };options.Controls.AddRange(new Control[]{extreme,ports,new Label { Text="按体积保留前",AutoSize=true,Padding=new Padding(10,7,0,0)},count,new Label{Text="个元件",AutoSize=true,Padding=new Padding(0,7,8,0)},shape,apply,all});
    var modes=new FlowLayoutPanel { Dock=DockStyle.Fill };modes.Controls.AddRange(new Control[]{connect,repair,new Label { Text="连接半径 0.03 mm，最多跨越 0.2 mm；无法合并时提示原因。",AutoSize=true,Padding=new Padding(15,5,0,0)}});
    layout.Controls.Add(files,0,0);layout.Controls.Add(options,0,1);layout.Controls.Add(modes,0,2);layout.Controls.Add(summary,0,3);layout.Controls.Add(grid,0,4);layout.Controls.Add(log,0,5);
    var actions=new FlowLayoutPanel { Dock=DockStyle.Fill,Padding=new Padding(0,6,0,0) };actions.Controls.AddRange(new Control[]{build,cancel,open,swOpen});layout.Controls.Add(actions,0,6);Controls.Add(layout);
@@ -81,20 +86,21 @@ namespace MasterMiao.Pcb
    grid.Columns.Add(new DataGridViewTextBoxColumn {Name="category",HeaderText="类别",ReadOnly=true,FillWeight=65});
    grid.Columns.Add(new DataGridViewTextBoxColumn {Name="volume",HeaderText="体积 mm³",ReadOnly=true,FillWeight=65});
    grid.Columns.Add(new DataGridViewTextBoxColumn {Name="rank",HeaderText="其他元件排名",ReadOnly=true,FillWeight=65});
-   grid.Columns.Add(new DataGridViewComboBoxColumn {Name="action",HeaderText="处理方式",DataSource=new[]{"保留原形","自动简化","长方体","圆柱","忽略无厚度内容"},FillWeight=95});
+   grid.Columns.Add(new DataGridViewComboBoxColumn {Name="action",HeaderText="处理方式",DataSource=new[]{"保留原形","自动简化","长方体","圆柱","忽略无厚度内容","不输出此元件"},FillWeight=95});
    grid.Columns.Add(new DataGridViewCheckBoxColumn {Name="review",HeaderText="待人工确认",FillWeight=65});
    grid.CurrentCellDirtyStateChanged+=(s,e)=>{if(grid.IsCurrentCellDirty)grid.CommitEdit(DataGridViewDataErrorContexts.Commit);};
    grid.CellValueChanged+=(s,e)=>{if(e.RowIndex>=0)UpdateSummary();};
    pick.Click+=(s,e)=>{using(var d=new OpenFileDialog{Filter="PCB STEP 模型|*.step;*.stp"})if(d.ShowDialog(this)==DialogResult.OK){input.Text=d.FileName;plan=null;grid.Rows.Clear();build.Enabled=false;open.Enabled=false;summary.Text="点击分析元件，读取板体、接口及体积排名。";}};
    repair.Enabled=false;connect.CheckedChanged+=(s,e)=>repair.Enabled=connect.Checked&&!Busy;
    analyze.Click+=async(s,e)=>await Analyze();build.Click+=async(s,e)=>await Build();
-   apply.Click+=(s,e)=>{if(plan!=null){PcbRules.Apply(plan,(int)count.Value,ports.Checked,new[]{"auto","box","cylinder"}[shape.SelectedIndex]);Populate();}};
-   all.Click+=(s,e)=>{if(plan==null)return;count.Value=PcbRules.Rows(plan).Count;ports.Checked=true;apply.PerformClick();};
+   apply.Click+=(s,e)=>{if(plan!=null){PcbRules.Apply(plan,(int)count.Value,ports.Checked,new[]{"auto","box","cylinder"}[shape.SelectedIndex],extreme.Checked);Populate();}};
+   extreme.CheckedChanged+=(s,e)=>{ports.Enabled=!Busy&&!extreme.Checked;if(plan!=null)apply.PerformClick();};
+   all.Click+=(s,e)=>{if(plan==null)return;extreme.Checked=false;count.Value=PcbRules.Rows(plan).Count;ports.Checked=true;apply.PerformClick();};
    swOpen.Click+=async(s,e)=>await OpenSingleInSw();
    cancel.Click+=(s,e)=>{canceled=true;if(nativeBusy){File.WriteAllText(Path.Combine(job,"native","cancel.flag"),"cancel");summary.Text="正在取消，当前几何操作结束后会关闭独立测试实例…";}else try{if(process!=null&&!process.HasExited)process.Kill();}catch(InvalidOperationException){}cancel.Enabled=false;};
    open.Click+=(s,e)=>{if(result!=null)Process.Start("explorer.exe",Quote(Path.GetDirectoryName(result)));};
   }
-  void SetBusy(bool value){Busy=value;pick.Enabled=analyze.Enabled=apply.Enabled=all.Enabled=grid.Enabled=count.Enabled=ports.Enabled=shape.Enabled=connect.Enabled=repair.Enabled=!value;repair.Enabled=!value&&connect.Checked;build.Enabled=!value&&plan!=null;cancel.Enabled=value;}
+  void SetBusy(bool value){Busy=value;pick.Enabled=analyze.Enabled=apply.Enabled=all.Enabled=grid.Enabled=count.Enabled=extreme.Enabled=ports.Enabled=shape.Enabled=connect.Enabled=repair.Enabled=!value;repair.Enabled=!value&&connect.Checked;ports.Enabled=!value&&!extreme.Checked;build.Enabled=!value&&plan!=null;cancel.Enabled=value;}
   static string Quote(string value) { return "\""+value.Replace("\"","\\\"")+"\""; }
   async Task Run(string args,string scriptName="pcb_simplify.py")
   {
@@ -117,7 +123,7 @@ namespace MasterMiao.Pcb
    if(!File.Exists(input.Text)){MessageBox.Show(this,"请先选择 STEP / STP 文件。");return;}
    job=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MasterMiao","PCB模型轻量化","Jobs",DateTime.Now.ToString("yyyyMMdd-HHmmss")+"-"+Guid.NewGuid().ToString("N").Substring(0,6));Directory.CreateDirectory(job);
    plan=null;grid.Rows.Clear();SetBusy(true);summary.Text="正在分析板体、接口、体积排名和简化形状…";
-   try{await Run("analyze "+Quote(input.Text)+" --work "+Quote(job)+" --keep-largest "+count.Value);plan=PcbRules.Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(Path.Combine(job,"plan.json")));PcbRules.Apply(plan,(int)count.Value,ports.Checked,new[]{"auto","box","cylinder"}[shape.SelectedIndex]);Populate();}
+   try{await Run("analyze "+Quote(input.Text)+" --work "+Quote(job)+" --keep-largest "+count.Value);plan=PcbRules.Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(Path.Combine(job,"plan.json")));PcbRules.Apply(plan,(int)count.Value,ports.Checked,new[]{"auto","box","cylinder"}[shape.SelectedIndex],extreme.Checked);Populate();}
    catch(Exception ex){summary.Text=ex.Message;}finally{SetBusy(false);}
   }
   public void LoadReviewedJob(string directory){job=directory;plan=PcbRules.Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(Path.Combine(job,"plan.json")));input.Text=PcbRules.Text(plan,"input");Populate();build.Enabled=true;}
@@ -127,13 +133,14 @@ namespace MasterMiao.Pcb
    foreach(var r in PcbRules.Rows(plan).OrderBy(r=>PcbRules.Text(r,"category")=="board"?0:PcbRules.Text(r,"category")=="interface"?1:2).ThenByDescending(r=>Convert.ToDouble(r["volume_mm3"])))
    {
     string cat=PcbRules.Text(r,"category"),act=PcbRules.Text(r,"action"),kind=PcbRules.Text(r,"simplify_shape");
-    int index=grid.Rows.Add(r["name"],cat=="board"?"板体":cat=="interface"?"重要接口":"其他元件",Convert.ToDouble(r["volume_mm3"]).ToString("0.###"),r.ContainsKey("rank")?r["rank"]:"",act=="keep"?"保留原形":act=="omit"?"忽略无厚度内容":kind=="box"?"长方体":kind=="cylinder"?"圆柱":"自动简化",r["review"]);
+    int index=grid.Rows.Add(r["name"],cat=="board"?"板体":cat=="interface"?"重要接口":"其他元件",Convert.ToDouble(r["volume_mm3"]).ToString("0.###"),extreme.Checked&&r.ContainsKey("extreme_rank")?r["extreme_rank"]:r.ContainsKey("rank")?r["rank"]:"",act=="keep"?"保留原形":act=="omit"?(Convert.ToInt32(r["solid_count"])>0?"不输出此元件":"忽略无厚度内容"):kind=="box"?"长方体":kind=="cylinder"?"圆柱":"自动简化",r["review"]);
     var row=grid.Rows[index];row.Tag=r;
     if(cat=="board")row.ReadOnly=true;
+    row.Cells["action"].ReadOnly=extreme.Checked||cat=="board";
     if(Convert.ToBoolean(r["review"]))row.DefaultCellStyle.BackColor=Color.LightGoldenrodYellow;
-   }UpdateSummary();
+   }grid.Columns["rank"].HeaderText=extreme.Checked?"全部元件排名":"其他元件排名";UpdateSummary();
   }
-  void UpdateSummary(){if(plan==null)return;int kept=0,simplified=0,review=0;foreach(DataGridViewRow r in grid.Rows){if(Convert.ToBoolean(r.Cells["review"].Value))review++;string a=Convert.ToString(r.Cells["action"].Value);if(a=="保留原形")kept++;else if(a!="忽略无厚度内容")simplified++;}summary.Text=string.Format("保留原形 {0} 项 · 简化 {1} 项 · 待确认 {2} 项。可逐项修改处理方式；重要接口不参加其他元件排名。",kept,simplified,review);}
+  void UpdateSummary(){if(plan==null)return;int kept=0,simplified=0,review=0,omitted=0;foreach(DataGridViewRow r in grid.Rows){if(Convert.ToBoolean(r.Cells["review"].Value))review++;string a=Convert.ToString(r.Cells["action"].Value);if(a=="保留原形")kept++;else if(a=="不输出此元件")omitted++;else if(a!="忽略无厚度内容")simplified++;}summary.Text=extreme.Checked?string.Format("极致轻量：保留板体，{0} 项元件轮廓，{1} 项不输出，{2} 项待确认。接口参与统一排名；原文件不变。",simplified,omitted,review):string.Format("保留原形 {0} 项 · 简化 {1} 项 · 待确认 {2} 项。可逐项修改处理方式；重要接口不参加其他元件排名。",kept,simplified,review);}
   async Task<int> ImportSingle(string path,bool openNative=false)
   {
    var info=new ProcessStartInfo(Path.Combine(Root,"MasterMiao.PcbSwImport.exe"),(openNative?"--open-native ":"")+Quote(path)){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
@@ -184,8 +191,9 @@ namespace MasterMiao.Pcb
   }  async Task Build()
   {
    grid.EndEdit();
-   foreach(DataGridViewRow g in grid.Rows){var r=(Dictionary<string,object>)g.Tag;string a=Convert.ToString(g.Cells["action"].Value);if(Convert.ToBoolean(g.Cells["review"].Value)){MessageBox.Show(this,"请逐项检查黄色待确认元件，确认类别和处理方式后取消待确认勾选。");return;}if(a=="忽略无厚度内容"&&Convert.ToInt32(r["solid_count"])>0){MessageBox.Show(this,"有实体的元件不能删除，请选择保留或简化。");return;}r["action"]=a=="保留原形"?"keep":a=="忽略无厚度内容"?"omit":"envelope";r["simplify_shape"]=a=="圆柱"?"cylinder":a=="长方体"?"box":"auto";r["review"]=false;}
-   using(var d=new SaveFileDialog { Filter="轻量 STEP 模型|*.stp",FileName=Path.GetFileNameWithoutExtension(input.Text)+(connect.Checked?"_轻量单实体.stp":"_轻量化.stp"),OverwritePrompt=true })
+   foreach(DataGridViewRow g in grid.Rows){var r=(Dictionary<string,object>)g.Tag;string a=Convert.ToString(g.Cells["action"].Value);if(Convert.ToBoolean(g.Cells["review"].Value)){MessageBox.Show(this,"请逐项检查黄色待确认元件，确认类别和处理方式后取消待确认勾选。");return;}if((a=="忽略无厚度内容"||a=="不输出此元件")&&Convert.ToInt32(r["solid_count"])>0&&!extreme.Checked){MessageBox.Show(this,"有实体的元件不能删除，请选择保留或简化。");return;}r["action"]=a=="保留原形"?"keep":(a=="忽略无厚度内容"||a=="不输出此元件")?"omit":"envelope";r["simplify_shape"]=a=="圆柱"?"cylinder":a=="长方体"?"box":"auto";r["review"]=false;}
+   if(extreme.Checked)PcbRules.Apply(plan,(int)count.Value,false,new[]{"auto","box","cylinder"}[shape.SelectedIndex],true);
+   using(var d=new SaveFileDialog { Filter="轻量 STEP 模型|*.stp",FileName=Path.GetFileNameWithoutExtension(input.Text)+(extreme.Checked?"_极致轻量":"")+(connect.Checked?"_轻量单实体.stp":"_轻量化.stp"),OverwritePrompt=true })
    {
     if(d.ShowDialog(this)!=DialogResult.OK)return;if(File.Exists(d.FileName)){MessageBox.Show(this,"请选择一个新文件名，避免覆盖已有模型。");return;}
     swOpen.Enabled=false;result=d.FileName;File.WriteAllText(Path.Combine(job,"plan.json"),PcbRules.Json.Serialize(plan),new UTF8Encoding(false));SetBusy(true);open.Enabled=false;summary.Text="正在生成并回读检查轻量模型…";

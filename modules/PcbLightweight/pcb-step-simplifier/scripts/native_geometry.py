@@ -105,12 +105,15 @@ def prepare(args):
     plan=json.loads((args.work/'plan.json').read_text(encoding='utf-8-sig'))
     if any(row['review'] for row in plan['components']):raise ValueError('Unresolved component review')
     if m.sha256(pathlib.Path(plan['input']))!=plan['source_sha256']:raise ValueError('Source file has changed; analyze again')
+    extreme=m.validate_extreme_plan(plan)
+    omitted=[]
     folder=args.work/'native';folder.mkdir(exist_ok=True)
     groups=[];plain=[];evidence=[];details=[];all_bounds=[];kept=[];simplified=[]
     for row in plan['components']:
         action=row['action']
         if action=='omit':
-            if row['solid_count']:raise ValueError('Cannot omit a physical component')
+            if row['solid_count'] and not extreme:raise ValueError('Cannot omit a physical component')
+            if row['solid_count']:omitted.append(row['name'])
             continue
         if action not in ['keep','envelope'] or (row['id']==plan['board_id'] and action!='keep'):
             raise ValueError('Invalid component action')
@@ -140,7 +143,7 @@ def prepare(args):
     groups.extend(dict(record,kind='bodies') for record in chunks(plain,folder,'components'))
     bounds=[min(b[k] for b in all_bounds) for k in range(3)]+[max(b[k+3] for b in all_bounds) for k in range(3)]
     manifest=dict(groups=groups,witnesses=evidence,bounds_mm=bounds,output=str(args.output.resolve()),
-                  input_sha256=plan['source_sha256'],kept=kept,simplified=simplified,detail_cleanup=details,
+                  input_sha256=plan['source_sha256'],simplification_mode='extreme' if extreme else 'standard',omitted_components=omitted,kept=kept,simplified=simplified,detail_cleanup=details,
                   radius_mm=.03,max_gap_mm=.2,folder=str(folder.resolve()))
     m.write_json(folder/'manifest.json',manifest)
     print('PREPARED',len(evidence),'bodies',flush=True)

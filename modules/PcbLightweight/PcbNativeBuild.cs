@@ -116,7 +116,7 @@ class PcbNativeBuild {
   CheckCanceled();File.Copy(step,output,false);File.Copy(part,native,false);
   report["solidworks_verified"]=true;report["nativeFaults"]=0;report["reopened"]=true;report["output"]=output;report["native_part"]=native;
   report["input_sha256"]=manifest["input_sha256"];report["output_sha256"]=Hash(output);report["native_sha256"]=Hash(native);
-  report["kept"]=manifest["kept"];report["simplified"]=manifest["simplified"];report["connections"]=connectionReports;report["boundary_repair_volume_mm3"]=repairDelta;
+  if(manifest.ContainsKey("simplification_mode"))report["simplification_mode"]=manifest["simplification_mode"];if(manifest.ContainsKey("omitted_components"))report["omitted_components"]=manifest["omitted_components"];report["kept"]=manifest["kept"];report["simplified"]=manifest["simplified"];report["connections"]=connectionReports;report["boundary_repair_volume_mm3"]=repairDelta;
   Write(output+".report.json",report);Console.WriteLine("PASS VERIFIED STEP AND SLDPRT "+output);
  }
  [STAThread]static int Main(string[] args){int brep=0,knit=0,surface=0;bool multi=false,interconnect=false,preferences=false;string template=null;

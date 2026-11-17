@@ -30,6 +30,25 @@ bu.add_argument('--bridge-radius', type=float, default=0.03)
 bu.add_argument('--pcurves', action='store_true', help='Include redundant surface parameter curves for a compatibility retry')
 
 
+def validate_extreme_plan(plan):
+    """Permit physical omission only for an explicit, exact top-N silhouette plan."""
+    if plan.get('simplification_mode', 'standard') != 'extreme':
+        return False
+    n=plan.get('retained_component_limit')
+    if isinstance(n,bool) or not isinstance(n,int) or not 0<=n<=100000:
+        raise ValueError('Invalid extreme component limit')
+    rows=plan['components']
+    board=next(r for r in rows if r['id']==plan['board_id'])
+    if board['action']!='keep' or not board['solid_count']:
+        raise ValueError('Extreme mode must preserve the board')
+    ranked=sorted((r for r in rows if r['solid_count'] and r is not board),key=lambda r:(-r['volume_mm3'],r['id']))
+    for i,row in enumerate(ranked):
+        expected='envelope' if i<n else 'omit'
+        if row['action']!=expected:
+            raise ValueError('Extreme mode requires exact volume top-N silhouettes, including interfaces')
+    return True
+
+
 def init_ocp(path):
     if path:
         sys.path.insert(0, str(path.resolve()))
@@ -473,7 +492,9 @@ def build(args):
     board = next(x for x in rows if x['id']==plan['board_id'])
     if board['action'] != 'keep':
         raise ValueError('The board may not be simplified or omitted')
+    extreme=validate_extreme_plan(plan)
     shapes, keep, simplified, omitted = [], [], [], []
+    omitted_components=[]
     detail_records=[]
     original_volume_sum=0.0
     for row in rows:
@@ -481,9 +502,9 @@ def build(args):
         if action not in ['keep','envelope','omit']:
             raise ValueError(f'Unknown action {action}')
         if action=='omit':
-            if row['solid_count']:
+            if row['solid_count'] and not extreme:
                 raise ValueError('Solid components must be preserved or simplified, not silently omitted')
-            omitted.append(row['name'])
+            (omitted_components if row['solid_count'] else omitted).append(row['name'])
             continue
         if not row['solid_count']:
             raise ValueError('Non-solid feature requires manual treatment')
@@ -583,6 +604,7 @@ def build(args):
     report=dict(input=plan['input'],output=str(output),source_sha256=plan['source_sha256'],input_bytes=plan['input_bytes'],output_bytes=output.stat().st_size,
                 original_faces=sum(x['faces'] for x in rows),final_faces=len(parts(final,TopAbs_FACE)),solid_count=len(fs),valid=valid,
                 volume_mm3=after_volume,bbox_mm=after_bounds,preserved=keep,simplified=simplified,omitted_non_solids=omitted,
+                simplification_mode='extreme' if extreme else 'standard',retained_component_limit=plan.get('retained_component_limit'),omitted_components=omitted_components,
                 bridges=bridges,bridge_added_volume_mm3=added_volume,include_pcurves=args.pcurves,
                 output_mode='connected-single' if args.connect_solids else 'multi' if args.multi_solid else 'legacy-single',solidworks_verified=False,
                 micro_detail_cleanup=detail_records,micro_detail_absolute_volume_change_mm3=detail_change)
