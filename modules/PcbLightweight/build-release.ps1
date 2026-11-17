@@ -8,13 +8,19 @@ if((Get-Item $hostExe).VersionInfo.FileVersion -ne '1.4.6.0'){throw 'Requires th
 Get-ChildItem $BaseDirectory -File | Where-Object {$_.Name -notlike 'unins*' -and $_.Name -ne 'MasterMiao.exe'} | Copy-Item -Destination $out
 Copy-Item $hostExe "$out/Core/MasterMiao.exe"
 Copy-Item $RuntimeDirectory "$out/PcbRuntime" -Recurse
-Copy-Item "$PSScriptRoot/pcb-step-simplifier" "$out/PcbEngine" -Recurse
+New-Item -ItemType Directory -Path "$out/PcbEngine/scripts" -Force | Out-Null
+foreach($name in 'pcb_simplify.py','micro_details.py','edge_parameters.py','native_geometry.py') {
+    Copy-Item "$PSScriptRoot/pcb-step-simplifier/scripts/$name" "$out/PcbEngine/scripts/$name"
+}
 Copy-Item "$PSScriptRoot/MasterMiao.exe.config" "$out/MasterMiao.exe.config" -Force
-& (Join-Path $PSScriptRoot '../../tools/BuildIcon.ps1') -Source (Join-Path $PSScriptRoot '../../assets/MasterMiao-symbol.png') -Destination "$out/MasterMiao.ico"
 $csc=Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 & $csc /nologo /target:library /platform:x64 /optimize+ "/out:$out/MasterMiao.Pcb.dll" "/reference:$out/Core/MasterMiao.exe" /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll (Join-Path $PSScriptRoot 'PcbModule.cs')
 if($LASTEXITCODE){throw 'PCB module compilation failed'}
 & $csc /nologo /target:winexe /platform:x64 /optimize+ "/out:$out/MasterMiao.Workspace.exe" "/win32icon:$out/MasterMiao.ico" "/reference:$out/Core/MasterMiao.exe" "/reference:$out/MasterMiao.Pcb.dll" /reference:System.Windows.Forms.dll (Join-Path $PSScriptRoot 'ReleaseLauncher.cs')
 if($LASTEXITCODE){throw 'Launcher compilation failed'}
 Move-Item "$out/MasterMiao.Workspace.exe" "$out/MasterMiao.exe"
+& $csc /nologo /target:exe /platform:x64 /optimize+ "/out:$out/MasterMiao.PcbSwImport.exe" "/reference:$out/SolidWorks.Interop.sldworks.dll" "/reference:$out/SolidWorks.Interop.swconst.dll" /reference:System.Core.dll /reference:System.Web.Extensions.dll (Join-Path $PSScriptRoot 'SwSingleImport.cs')
+if($LASTEXITCODE){throw 'PCB SolidWorks importer compilation failed'}
+& $csc /nologo /target:exe /platform:x64 /optimize+ "/out:$out/MasterMiao.PcbNative.exe" "/reference:$out/SolidWorks.Interop.sldworks.dll" "/reference:$out/SolidWorks.Interop.swconst.dll" /reference:System.Core.dll /reference:System.Web.Extensions.dll (Join-Path $PSScriptRoot 'PcbNativeBuild.cs')
+if($LASTEXITCODE){throw 'PCB native builder compilation failed'}
 Write-Output $out

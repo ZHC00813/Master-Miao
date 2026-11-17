@@ -1,8 +1,8 @@
-当前安装版本：**[1.4.8 — Logo显示修复](releases/v1.4.8/README.md)**。包含经验证的1.4.6核心与新增PCB模块；根目录历史主程序源码版本说明见该发布页。
+当前安装版本：**[1.4.9 — PCB 单实体修复](releases/v1.4.9/README.md)**。包含经验证的1.4.6核心与新增PCB模块；根目录历史主程序源码版本说明见该发布页。
 
-# 喵师傅 Master Miao 1.4.1
+# 喵师傅 Master Miao
 
-**[下载喵师傅 1.4.1 Windows x64 安装程序](https://github.com/ZHC00813/Master-Miao/raw/refs/heads/main/releases/v1.4.1/MasterMiao-1.4.1-Setup-x64.exe)**
+**[下载最新 Windows x64 安装程序](https://github.com/ZHC00813/Master-Miao/releases/tag/v1.4.9)**
 
 [阅读 1.4.1 中文功能说明](releases/v1.4.1/喵师傅-1.4.1-功能说明.txt)。实体列表支持右键反选、隐藏、行高亮和多行备注。
 

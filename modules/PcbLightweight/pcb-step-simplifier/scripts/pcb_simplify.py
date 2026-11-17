@@ -21,6 +21,8 @@ an.add_argument('--keep-pattern', default='')
 an.add_argument('--board-pattern', default='')
 bu = commands.add_parser('build')
 bu.add_argument('--multi-solid', action='store_true', help='Keep disconnected solids without adding connections')
+bu.add_argument('--connect-solids', action='store_true', help='Join solids with bounded microscopic volumetric connections')
+bu.add_argument('--clean-micro-details', action='store_true', help='Clean bounded microscopic decorative details for CAD compatibility')
 bu.add_argument('--work', type=pathlib.Path, required=True)
 bu.add_argument('--output', type=pathlib.Path, required=True)
 bu.add_argument('--max-gap', type=float, default=0.2)
@@ -31,12 +33,23 @@ bu.add_argument('--pcurves', action='store_true', help='Include redundant surfac
 def init_ocp(path):
     if path:
         sys.path.insert(0, str(path.resolve()))
+    # OCCT 8 exposes instantiated collection types in OCP.collections.
+    import OCP.TDF as tdf
+    import OCP.TopTools as top_tools
+    if not hasattr(tdf,'TDF_LabelSequence'):
+        from OCP.collections import Sequence_TDF_Label,List_TopoDS_Shape,IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher
+        tdf.TDF_LabelSequence=Sequence_TDF_Label
+        top_tools.TopTools_ListOfShape=List_TopoDS_Shape
+        top_tools.TopTools_IndexedMapOfShape=IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher
     # Imports are deferred so --help works without the CAD runtime.
     global TopoDS, TopoDS_Shape, TopoDS_Compound, TopoDS_Iterator
     global TopExp_Explorer, TopAbs_SOLID, TopAbs_FACE
     global BRepTools, BRep_Builder, BRepBndLib, Bnd_Box, BRepGProp, GProp_GProps
     global BRepCheck_Analyzer, gp_Pnt, gp_Vec, gp_Dir, gp_Ax2
     from OCP.TopoDS import TopoDS, TopoDS_Shape, TopoDS_Compound, TopoDS_Iterator
+    for kind in ('Face','Edge','Vertex','Wire','Shell','Solid'):
+        if not hasattr(TopoDS,kind+'_s'):
+            setattr(TopoDS,kind+'_s',getattr(TopoDS,kind))
     from OCP.TopExp import TopExp_Explorer
     from OCP.TopAbs import TopAbs_SOLID, TopAbs_FACE
     from OCP.BRepTools import BRepTools
@@ -362,11 +375,91 @@ def connect(shape, max_gap, radius):
     return shape, additions
 
 
+def micro_connections(shapes, max_gap, radius):
+    """Build a bounded spanning tree, including point/edge contacts before fuse.
+
+    A connection must have a positive-volume intersection with both endpoints;
+    a tangent contact alone is not a valid bridge.
+    """
+    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeSphere, BRepPrimAPI_MakeCylinder
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
+    bounds = [bbox(s, True) for s in shapes]
+    parent = list(range(len(shapes)))
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    pairs = []
+    for i, a in enumerate(bounds):
+        for j in range(i):
+            b = bounds[j]
+            lower = math.sqrt(sum(max(0, a[k]-b[k+3], b[k]-a[k+3])**2 for k in range(3)))
+            if lower <= max_gap + 1e-7:
+                pairs.append((lower, j, i))
+    links, records = [], []
+    log('Checking micro-connection candidates:', len(pairs))
+    for _, i, j in sorted(pairs):
+        if root(i) == root(j):
+            continue
+        # Restrict distance search to faces near the other solid's bounds.
+        # This avoids a quadratic face-pair search against the entire PCB.
+        near_shapes = []
+        for own, other in ((i,j),(j,i)):
+            b = bounds[other]
+            near = []
+            for face in parts(shapes[own], TopAbs_FACE):
+                a = bbox(face, True)
+                lower = math.sqrt(sum(max(0,a[k]-b[k+3],b[k]-a[k+3])**2 for k in range(3)))
+                if lower <= max_gap + radius + 1e-7:
+                    near.append(face)
+            near_shapes.append(compound(near))
+        ds = BRepExtrema_DistShapeShape(near_shapes[0], near_shapes[1])
+        ds.Perform()
+        if not ds.IsDone() or ds.Value() > max_gap + 1e-7:
+            continue
+        log('Checking overlap',i,j)
+        overlap = BRepAlgoAPI_Common(shapes[i], shapes[j])
+        if overlap.IsDone() and abs(volume(overlap.Shape())) > 1e-8:
+            parent[root(j)] = root(i)
+            continue
+        log('Distance solutions', ds.NbSolution(), 'gap', ds.Value())
+        for solution in range(1, ds.NbSolution()+1):
+            p, q = ds.PointOnShape1(solution), ds.PointOnShape2(solution)
+            distance = p.Distance(q)
+            pieces = [BRepPrimAPI_MakeSphere(p, radius).Shape()]
+            if distance > 1e-7:
+                pieces += [BRepPrimAPI_MakeSphere(q, radius).Shape(),
+                           BRepPrimAPI_MakeCylinder(gp_Ax2(p,gp_Dir(gp_Vec(p,q))),radius,distance).Shape()]
+            bridge = heal(fuse(pieces))
+            if any(abs(volume(BRepAlgoAPI_Common(bridge, shapes[k]).Shape())) < 1e-10 for k in (i,j)):
+                continue
+            links.append(bridge)
+            records.append(dict(solids=[i,j], gap_mm=distance, radius_mm=radius,
+                                start=[p.X(),p.Y(),p.Z()],end=[q.X(),q.Y(),q.Z()]))
+            parent[root(j)] = root(i)
+            if len(links) % 20 == 0:
+                log('Micro connections prepared:', len(links))
+            break
+        if len({root(k) for k in range(len(shapes))}) == 1:
+            break
+    groups = len({root(k) for k in range(len(shapes))})
+    if groups != 1:
+        raise ValueError(f'{groups} groups remain beyond the micro-connection limit; no single solid exported')
+    log('Micro connections:', len(links), 'radius mm:', radius)
+    return links, records
+
+
 def build(args):
     from OCP.STEPControl import STEPControl_Writer, STEPControl_Reader, STEPControl_AsIs
     from OCP.Interface import Interface_Static
     from OCP.IFSelect import IFSelect_RetDone
     work, output = args.work.resolve(), args.output.resolve()
+    if args.multi_solid and args.connect_solids:
+        raise ValueError('Choose either multi-solid or connected single-solid output')
+    if args.clean_micro_details and not args.connect_solids:
+        raise ValueError('Micro-detail cleanup is only available with connected single-solid output')
     plan = json.loads((work / 'plan.json').read_text(encoding='utf-8'))
     if output.exists():
         raise ValueError('Output exists; choose a new file name')
@@ -381,6 +474,8 @@ def build(args):
     if board['action'] != 'keep':
         raise ValueError('The board may not be simplified or omitted')
     shapes, keep, simplified, omitted = [], [], [], []
+    detail_records=[]
+    original_volume_sum=0.0
     for row in rows:
         action = row['action']
         if action not in ['keep','envelope','omit']:
@@ -397,13 +492,43 @@ def build(args):
         if kind == 'auto': kind = row.get('suggested_shape','box')
         suffix = ('_cylinder' if kind == 'cylinder' else '_envelope') if action == 'envelope' else ''
         path = work / 'geometry' / (row['id'] + suffix + '.brep')
-        shapes.extend(parts(read_brep(path),TopAbs_SOLID))
+        bodies=parts(read_brep(path),TopAbs_SOLID)
+        original_volume_sum+=sum(abs(volume(b)) for b in bodies)
+        if args.clean_micro_details and row['id']!=plan['board_id'] and action=='keep':
+            from micro_details import clean_body
+            cleaned=[]; records=[]
+            for index,body in enumerate(bodies):
+                from edge_parameters import normalize
+                body,parameter_record=normalize(body,sys.modules[__name__])
+                if parameter_record: records.append(dict(parameter_record,component_id=row['id'],body_index=index))
+                if row.get('preserve_micro_details',False):
+                    new_body,record=body,None
+                else:
+                    new_body,record=clean_body(body,sys.modules[__name__],len(bodies)>1)
+                if new_body is not None: cleaned.extend(parts(new_body,TopAbs_SOLID))
+                if record: records.append(dict(record,component_id=row['id'],body_index=index))
+            if not cleaned:
+                raise ValueError('Micro-detail cleanup would remove an entire component')
+            if max(abs(a-b) for a,b in zip(bbox(compound(bodies),True),bbox(compound(cleaned),True)))>.01:
+                raise ValueError('Micro-detail cleanup changed component bounds beyond 0.01 mm')
+            if records: log('Micro-detail cleanup:',row['id'],'changes:',len(records))
+            bodies=cleaned; detail_records.extend(records)
+        shapes.extend(bodies)
         (keep if action=='keep' else simplified).append(row['name'])
+    detail_change=sum(abs(x['volume_change_mm3']) for x in detail_records)
+    if detail_change>max(.001,original_volume_sum*1e-6):
+        raise ValueError('Micro-detail cleanup exceeded its aggregate volume budget')
     log('Fusing', len(shapes), 'shapes; protected',len(keep),'simplified',len(simplified))
     shape = compound(shapes) if args.multi_solid else heal(fuse(shapes))
     base_volume = volume(shape)
+    log('Initial union ready; solids:', len(parts(shape,TopAbs_SOLID)))
     bridges = []
-    if not args.multi_solid:
+    if args.connect_solids:
+        union_solids = parts(shape, TopAbs_SOLID)
+        links, bridges = micro_connections(union_solids, args.max_gap, args.bridge_radius)
+        shape = heal(fuse(union_solids + links))
+        BRepTools.Write_s(shape,str(work/'connection-result.brep'))
+    elif not args.multi_solid:
         shape, bridges = connect(shape,args.max_gap,args.bridge_radius)
     added_volume = volume(shape)-base_volume
     if added_volume < -0.001 or added_volume > max(0.01,abs(base_volume)*0.0001):
@@ -411,7 +536,7 @@ def build(args):
     shape = heal(shape)
     ss = parts(shape,TopAbs_SOLID)
     if not ss or (not args.multi_solid and len(ss)!=1):
-        raise ValueError('Unexpected solid count')
+        raise ValueError(f'Expected one connected solid, got {len(ss)}')
     if not args.multi_solid: shape = ss[0]
     expected_solids = len(ss)
     before_volume, before_bounds = volume(shape), bbox(shape)
@@ -458,9 +583,11 @@ def build(args):
     report=dict(input=plan['input'],output=str(output),source_sha256=plan['source_sha256'],input_bytes=plan['input_bytes'],output_bytes=output.stat().st_size,
                 original_faces=sum(x['faces'] for x in rows),final_faces=len(parts(final,TopAbs_FACE)),solid_count=len(fs),valid=valid,
                 volume_mm3=after_volume,bbox_mm=after_bounds,preserved=keep,simplified=simplified,omitted_non_solids=omitted,
-                bridges=bridges,bridge_added_volume_mm3=added_volume,include_pcurves=args.pcurves,solidworks_verified=False)
+                bridges=bridges,bridge_added_volume_mm3=added_volume,include_pcurves=args.pcurves,
+                output_mode='connected-single' if args.connect_solids else 'multi' if args.multi_solid else 'legacy-single',solidworks_verified=False,
+                micro_detail_cleanup=detail_records,micro_detail_absolute_volume_change_mm3=detail_change)
     write_json(work/'report.json',report)
-    log('SUCCESS',json.dumps({k:v for k,v in report.items() if k not in ['preserved','simplified','omitted_non_solids','bridges']},ensure_ascii=False))
+    log('SUCCESS',json.dumps({k:v for k,v in report.items() if k not in ['preserved','simplified','omitted_non_solids','bridges','micro_detail_cleanup']},ensure_ascii=False))
 
 
 if __name__=='__main__':
