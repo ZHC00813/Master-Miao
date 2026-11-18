@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -119,6 +119,43 @@ class PcbNativeBuild {
   if(manifest.ContainsKey("simplification_mode"))report["simplification_mode"]=manifest["simplification_mode"];if(manifest.ContainsKey("omitted_components"))report["omitted_components"]=manifest["omitted_components"];report["kept"]=manifest["kept"];report["simplified"]=manifest["simplified"];report["connections"]=connectionReports;report["boundary_repair_volume_mm3"]=repairDelta;
   Write(output+".report.json",report);Console.WriteLine("PASS VERIFIED STEP AND SLDPRT "+output);
  }
+ static void RunMulti(Dictionary<string,object> manifest){
+  string output=Text(manifest,"output"),native=Path.ChangeExtension(output,"SLDPRT");
+  if(File.Exists(output)||File.Exists(native))throw new Exception("Output exists");
+  var all=LoadGroups(manifest["groups"]);int count=all.Count;double original=all.Sum(b=>Volume(b));var doc=Part(all);string step=null;bool verified=false;double delta=0;
+  for(int round=0;round<3;round++){
+   step=Path.Combine(folder,"multi-roundtrip-"+Guid.NewGuid().ToString("N")+".stp");Save(doc,step);Close(doc);doc=Load(step);
+   if(Bodies(doc).Length!=count||Bodies(doc,1).Length!=0)throw new Exception("Multi-body STEP count changed");
+   if(Faults(doc)==0){verified=true;break;}
+   double before=Volume(doc);((IPartDoc)doc).ImportDiagnosis(true,false,true,0);delta+=Math.Abs(Volume(doc)-before);
+   if(Bodies(doc).Length!=count||Bodies(doc,1).Length!=0||Faults(doc)!=0||delta>.05)throw new Exception("Multi-body boundary repair exceeded limits");
+  }
+  if(!verified||Math.Abs(Volume(doc)-original)>.05)throw new Exception("Multi-body geometry verification failed");
+  string part=Path.Combine(folder,"multi-verified-"+Guid.NewGuid().ToString("N")+".SLDPRT");double volume=Volume(doc);Save(doc,part);Close(doc);int e=0,w=0;doc=sw.OpenDoc6(part,1,1,"",ref e,ref w);if(doc!=null)opened.Add(doc);
+  if(doc==null||Bodies(doc).Length!=count||Bodies(doc,1).Length!=0||Faults(doc)!=0||Math.Abs(Volume(doc)-volume)>.001)throw new Exception("Multi-body native reopen failed");Close(doc);
+  Python("audit --multi --input "+Quote(step)+" --manifest "+Quote(manifestPath)+" --work "+Quote(folder));
+  var report=Read(Path.Combine(folder,"geometry-audit.json"));report["solidworks_verified"]=true;report["nativeFaults"]=0;report["reopened"]=true;report["boundary_repair_volume_mm3"]=delta;
+  File.Copy(step,output,false);File.Copy(part,native,false);Write(output+".report.json",report);Console.WriteLine("PASS MULTI STEP AND SLDPRT count="+count);
+ }
+ static void ConvertPart(Dictionary<string,object> manifest){
+  string input=Text(manifest,"input"),target=Text(manifest,"output");
+  if(!string.Equals(Path.GetExtension(target),".SLDPRT",StringComparison.OrdinalIgnoreCase)||File.Exists(target))throw new Exception("Choose a new SLDPRT output filename");
+  var doc=Load(input);int count=Bodies(doc).Length;double volume=Volume(doc);
+  Console.WriteLine("IMPORTED solids="+count+" surfaces="+Bodies(doc,1).Length+" faults="+Faults(doc));
+  if(count==0||Bodies(doc,1).Length!=0)throw new Exception("Imported PCB geometry failed validation");
+  if(Faults(doc)!=0){
+   var bounds=Bodies(doc).Select(b=>(double[])b.GetBodyBox()).ToArray();
+   ((IPartDoc)doc).ImportDiagnosis(true,false,true,0);
+   var after=Bodies(doc).Select(b=>(double[])b.GetBodyBox()).ToArray();
+   double change=Math.Abs(Volume(doc)-volume);
+   if(after.Length!=bounds.Length||Bodies(doc,1).Length!=0||Faults(doc)!=0||change>.05||bounds.Where((b,i)=>b.Zip(after[i],(x,y)=>Math.Abs(x-y)).Max()>1e-6).Any())throw new Exception("Bounded PCB boundary repair failed");
+   Console.WriteLine("BOUNDARY REPAIR delta_mm3="+change);volume=Volume(doc);
+  }
+  Save(doc,target);Close(doc);int error=0,warning=0;doc=sw.OpenDoc6(target,1,1,"",ref error,ref warning);if(doc!=null)opened.Add(doc);
+  if(doc==null||Bodies(doc).Length!=count||Bodies(doc,1).Length!=0||Faults(doc)!=0||Math.Abs(Volume(doc)-volume)>Math.Max(1e-6,volume*1e-8))throw new Exception("Native part save/reopen validation failed");
+  Close(doc);Write(target+".verification.json",new{solids=count,volume_mm3=volume,nativeFaults=0,reopened=true,input_sha256=Hash(input),output_sha256=Hash(target)});
+  Console.WriteLine("PASS CONVERT SAVE REOPEN "+target);
+ }
  [STAThread]static int Main(string[] args){int brep=0,knit=0,surface=0;bool multi=false,interconnect=false,preferences=false;string template=null;
   try{
    manifestPath=Path.GetFullPath(args[0]);var manifest=Read(manifestPath);folder=Text(manifest,"folder");CheckCanceled();
@@ -147,7 +184,7 @@ class PcbNativeBuild {
     if(!File.Exists(fallback))throw new Exception("Configure a valid SolidWorks part template");sw.SetUserPreferenceStringValue((int)swUserPreferenceStringValue_e.swDefaultTemplatePart,fallback);
    }
    sw.SetUserPreferenceIntegerValue(207,0);sw.SetUserPreferenceIntegerValue(577,0);sw.SetUserPreferenceIntegerValue((int)swUserPreferenceIntegerValue_e.swCreateBodyFromSurfacesOption,(int)swGeneralImportSurfaceSolidEntityOptions_e.swGeneralImportByBrep);sw.SetUserPreferenceToggle(220,false);sw.SetUserPreferenceToggle(691,false);
-   Run(manifest);return 0;
+   if(manifest.ContainsKey("operation")&&Text(manifest,"operation")=="build-multi")RunMulti(manifest);else if(manifest.ContainsKey("operation")&&Text(manifest,"operation")=="convert-part")ConvertPart(manifest);else Run(manifest);return 0;
   }catch(Exception error){Console.WriteLine("FAIL "+error);return 1;}
   finally{
    if(sw!=null){foreach(var doc in opened.ToArray())try{Close(doc);}catch{}

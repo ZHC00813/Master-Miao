@@ -45,6 +45,14 @@ namespace MasterMiao.Pcb
    }
   }
  }
+ public static class PcbOutputs {
+  public static string[] Targets(string path,bool step,bool part){if(!step&&!part)throw new ArgumentException("请至少选择一种导出格式。");return new[]{step?Path.ChangeExtension(path,"stp"):null,part?Path.ChangeExtension(path,"SLDPRT"):null}.Where(x=>x!=null).ToArray();}
+  public static string[] Publish(string stagedStep,string target,bool step,bool part){
+   var paths=Targets(target,step,part);if(paths.Any(File.Exists))throw new IOException("目标文件已存在，请使用新的文件名。");var written=new List<string>();
+   try{foreach(string path in paths){string source=Path.ChangeExtension(stagedStep,Path.GetExtension(path));if(!File.Exists(source))throw new IOException("所选格式尚未生成："+Path.GetExtension(path));File.Copy(source,path,false);written.Add(path);}return paths;}
+   catch{foreach(string path in written)File.Delete(path);throw;}
+  }
+ }
  public sealed class PcbView : UserControl
  {
   readonly TextBox input=new TextBox { ReadOnly=true,Width=600 };
@@ -55,6 +63,8 @@ namespace MasterMiao.Pcb
   readonly Button open=new Button { Text="打开结果文件夹",AutoSize=true,Enabled=false };
   readonly Button swOpen=new Button { Text="在 SolidWorks 中打开",AutoSize=true,Enabled=false };
   readonly NumericUpDown count=new NumericUpDown { Minimum=0,Maximum=100000,Value=10,Width=78 };
+  readonly CheckBox exportStep=new CheckBox {Text="STP",Checked=true,AutoSize=true};
+  readonly CheckBox exportPart=new CheckBox {Text="SolidWorks 零件（SLDPRT）",AutoSize=true};
   readonly CheckBox ports=new CheckBox { Text="保留重要接口原形",Checked=true,AutoSize=true };
 
 
@@ -66,6 +76,7 @@ namespace MasterMiao.Pcb
   readonly Button all=new Button { Text="保留全部细节",AutoSize=true };
   readonly Label summary=new Label { Dock=DockStyle.Fill,Text="将 STEP / STP 文件拖入此页面，或点击导入按钮，然后分析元件。原始模型保持不变。",AutoEllipsis=true,TextAlign=ContentAlignment.MiddleLeft };
   readonly TextBox log=new TextBox { Multiline=true,ReadOnly=true,Dock=DockStyle.Fill,ScrollBars=ScrollBars.Vertical };
+  readonly ProgressBar progress=new ProgressBar {Dock=DockStyle.Bottom,Height=5,Visible=false,Style=ProgressBarStyle.Marquee,MarqueeAnimationSpeed=28};
   readonly DataGridView grid=new DataGridView { Dock=DockStyle.Fill,AllowUserToAddRows=false,AllowUserToDeleteRows=false,AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.Fill,RowHeadersVisible=false,BackgroundColor=Color.White,SelectionMode=DataGridViewSelectionMode.FullRowSelect,MultiSelect=true };
   Dictionary<string,object> plan; string job,result; Process process; bool canceled,nativeBusy;
   public bool Busy {get; private set;}
@@ -75,13 +86,13 @@ namespace MasterMiao.Pcb
    Padding=new Padding(14);BackColor=Color.FromArgb(246,248,251);Font=new Font("Microsoft YaHei UI",9);
    shape.Items.AddRange(new object[]{"自动：圆柱 / 方形","全部长方体","全部圆柱"});shape.SelectedIndex=0;
    var layout=new TableLayoutPanel { Dock=DockStyle.Fill,RowCount=7,ColumnCount=1 };
-   foreach(int h in new[]{42,76,68,48})layout.RowStyles.Add(new RowStyle(SizeType.Absolute,h));
+   foreach(int h in new[]{42,76,96,48})layout.RowStyles.Add(new RowStyle(SizeType.Absolute,h));
    layout.RowStyles.Add(new RowStyle(SizeType.Percent,100));layout.RowStyles.Add(new RowStyle(SizeType.Absolute,105));layout.RowStyles.Add(new RowStyle(SizeType.Absolute,44));
-   var files=new FlowLayoutPanel { Dock=DockStyle.Fill };files.Controls.AddRange(new Control[]{pick,input,analyze});
+   var files=new TableLayoutPanel { Dock=DockStyle.Fill,ColumnCount=3,RowCount=1,BackColor=Color.White };files.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));files.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));files.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));input.Dock=DockStyle.Fill;files.Controls.Add(pick,0,0);files.Controls.Add(input,1,0);files.Controls.Add(analyze,2,0);
    var options=new FlowLayoutPanel { Dock=DockStyle.Fill };options.Controls.AddRange(new Control[]{extreme,ports,new Label { Text="按体积保留前",AutoSize=true,Padding=new Padding(10,7,0,0)},count,new Label{Text="个元件",AutoSize=true,Padding=new Padding(0,7,8,0)},shape,apply,all});
-   var modes=new FlowLayoutPanel { Dock=DockStyle.Fill };modes.Controls.AddRange(new Control[]{connect,repair,new Label { Text="连接半径 0.03 mm，最多跨越 0.2 mm；无法合并时提示原因。",AutoSize=true,Padding=new Padding(15,5,0,0)}});
+   var modes=new FlowLayoutPanel { Dock=DockStyle.Fill };modes.Controls.AddRange(new Control[]{new Label{Text="导出格式",AutoSize=true,Padding=new Padding(0,4,8,0)},exportStep,exportPart,connect,repair,new Label { Text="连接半径 0.03 mm，最多跨越 0.2 mm；无法合并时提示原因。",AutoSize=true,Padding=new Padding(15,5,0,0)}});
    layout.Controls.Add(files,0,0);layout.Controls.Add(options,0,1);layout.Controls.Add(modes,0,2);layout.Controls.Add(summary,0,3);layout.Controls.Add(grid,0,4);layout.Controls.Add(log,0,5);
-   var actions=new FlowLayoutPanel { Dock=DockStyle.Fill,Padding=new Padding(0,6,0,0) };actions.Controls.AddRange(new Control[]{build,cancel,open,swOpen});layout.Controls.Add(actions,0,6);Controls.Add(layout);
+   var actions=new FlowLayoutPanel { Dock=DockStyle.Fill,Padding=new Padding(0,6,0,0) };actions.Controls.AddRange(new Control[]{build,cancel,open,swOpen});layout.Controls.Add(actions,0,6);Controls.Add(layout);Controls.Add(progress);
    grid.Columns.Add(new DataGridViewTextBoxColumn {Name="name",HeaderText="元件名称",ReadOnly=true,FillWeight=230});
    grid.Columns.Add(new DataGridViewTextBoxColumn {Name="category",HeaderText="类别",ReadOnly=true,FillWeight=65});
    grid.Columns.Add(new DataGridViewTextBoxColumn {Name="volume",HeaderText="体积 mm³",ReadOnly=true,FillWeight=65});
@@ -105,7 +116,7 @@ namespace MasterMiao.Pcb
   void SelectInput(string path){if(!AcceptInput(path))return;input.Text=Path.GetFullPath(path);plan=null;result=null;job=null;grid.Rows.Clear();log.Clear();build.Enabled=open.Enabled=swOpen.Enabled=false;summary.Text="已载入文件。点击分析元件，读取板体、接口及体积排名。";}
   string DroppedFile(IDataObject data){if(data==null||!data.GetDataPresent(DataFormats.FileDrop))return null;var paths=data.GetData(DataFormats.FileDrop) as string[];return paths!=null&&paths.Length==1&&AcceptInput(paths[0])?paths[0]:null;}
   void EnableFileDrop(Control target){target.AllowDrop=true;target.DragEnter+=(s,e)=>{e.Effect=DroppedFile(e.Data)!=null&&(e.AllowedEffect&DragDropEffects.Copy)!=0?DragDropEffects.Copy:DragDropEffects.None;};target.DragDrop+=(s,e)=>{var path=DroppedFile(e.Data);if(path!=null)SelectInput(path);};foreach(Control child in target.Controls)EnableFileDrop(child);}
-  void SetBusy(bool value){Busy=value;pick.Enabled=analyze.Enabled=apply.Enabled=all.Enabled=grid.Enabled=count.Enabled=extreme.Enabled=ports.Enabled=shape.Enabled=connect.Enabled=repair.Enabled=!value;repair.Enabled=!value&&connect.Checked;ports.Enabled=!value&&!extreme.Checked;build.Enabled=!value&&plan!=null;cancel.Enabled=value;}
+  void SetBusy(bool value){Busy=value;progress.Visible=value;exportStep.Enabled=exportPart.Enabled=!value;pick.Enabled=analyze.Enabled=apply.Enabled=all.Enabled=grid.Enabled=count.Enabled=extreme.Enabled=ports.Enabled=shape.Enabled=connect.Enabled=repair.Enabled=!value;repair.Enabled=!value&&connect.Checked;ports.Enabled=!value&&!extreme.Checked;build.Enabled=!value&&plan!=null;cancel.Enabled=value;}
   static string Quote(string value) { return "\""+value.Replace("\"","\\\"")+"\""; }
   async Task Run(string args,string scriptName="pcb_simplify.py")
   {
@@ -127,7 +138,7 @@ namespace MasterMiao.Pcb
   {
    if(!File.Exists(input.Text)){MessageBox.Show(this,"请先选择 STEP / STP 文件。");return;}
    job=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MasterMiao","PCB模型轻量化","Jobs",DateTime.Now.ToString("yyyyMMdd-HHmmss")+"-"+Guid.NewGuid().ToString("N").Substring(0,6));Directory.CreateDirectory(job);
-   plan=null;grid.Rows.Clear();SetBusy(true);summary.Text="正在分析板体、接口、体积排名和简化形状…";
+   plan=null;grid.Rows.Clear();SetBusy(true);summary.Text="喵师傅正在施工：正在分析板体、接口、体积排名和简化形状…";
    try{await Run("analyze "+Quote(input.Text)+" --work "+Quote(job)+" --keep-largest "+count.Value);plan=PcbRules.Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(Path.Combine(job,"plan.json")));PcbRules.Apply(plan,(int)count.Value,ports.Checked,new[]{"auto","box","cylinder"}[shape.SelectedIndex],extreme.Checked);Populate();}
    catch(Exception ex){summary.Text=ex.Message;}finally{SetBusy(false);}
   }
@@ -155,10 +166,11 @@ namespace MasterMiao.Pcb
     return helper.ExitCode;
    }
   }
-  async Task BuildNative(string path)
+  async Task BuildNative(string path,bool multi=false)
   {
-   summary.Text="正在准备原生单实体构建，保留板体孔槽、接口及选定元件…";
-   await Run("prepare --work "+Quote(job)+" --output "+Quote(path)+(repair.Checked?" --clean":""),"native_geometry.py");
+   summary.Text=multi?"喵师傅正在施工：准备多实体原生零件…":"正在准备原生单实体构建，保留板体孔槽、接口及选定元件…";
+   await Run("prepare --work "+Quote(job)+" --output "+Quote(path)+(!multi&&repair.Checked?" --clean":""),"native_geometry.py");
+   if(multi){string m=Path.Combine(job,"native","manifest.json");var data=PcbRules.Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(m));data["operation"]="build-multi";File.WriteAllText(m,PcbRules.Json.Serialize(data));}
    string cancelFile=Path.Combine(job,"native","cancel.flag");if(File.Exists(cancelFile))File.Delete(cancelFile);
    cancel.Enabled=true;nativeBusy=true;
    var info=new ProcessStartInfo(Path.Combine(Root,"MasterMiao.PcbNative.exe"),Quote(Path.Combine(job,"native","manifest.json"))){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
@@ -174,7 +186,7 @@ namespace MasterMiao.Pcb
     await Task.Run(()=>helper.WaitForExit());transcript.AppendLine(await stderr);
     string text=transcript.ToString();File.WriteAllText(Path.Combine(job,"native-build.log"),text,Encoding.UTF8);log.Text=text.Length>12000?text.Substring(text.Length-12000):text;
     if(canceled)throw new OperationCanceledException("任务已取消，原文件和孔标签库未修改。");
-    if(helper.ExitCode!=0)throw new IOException("单实体构建未通过验证，未发布结果文件；请查看日志。原文件和孔标签库未修改。");
+    if(helper.ExitCode!=0)throw new IOException("模型构建未通过验证，未发布结果文件；请查看日志。原文件和孔标签库未修改。");
    }}finally{nativeBusy=false;}
   }
   async Task OpenSingleInSw()
@@ -186,7 +198,7 @@ namespace MasterMiao.Pcb
     string nativePath=Path.ChangeExtension(result,"SLDPRT");
     if(File.Exists(nativePath)){
      if(await ImportSingle(nativePath,true)!=0)throw new IOException("未能打开原生零件，请查看日志。");
-     summary.Text="已在 SolidWorks 中打开原生单实体零件。";return;
+     summary.Text="已在 SolidWorks 中打开原生零件。";return;
     }
     int code=await ImportSingle(result);
     if(code==2)throw new IOException("SolidWorks 检测到几何错误，未通过验证；本次导入已关闭，错误位置已记录。可调整保留细节后重试，清理微小装饰不保证能修复所有错误。");
@@ -195,24 +207,26 @@ namespace MasterMiao.Pcb
    }catch(Exception ex){summary.Text=ex.Message;}finally{SetBusy(false);swOpen.Enabled=true;}
   }  async Task Build()
   {
+   if(!exportStep.Checked&&!exportPart.Checked){MessageBox.Show(this,"请至少选择一种导出格式：STP 或 SolidWorks 零件。");return;}
    grid.EndEdit();
    foreach(DataGridViewRow g in grid.Rows){var r=(Dictionary<string,object>)g.Tag;string a=Convert.ToString(g.Cells["action"].Value);if(Convert.ToBoolean(g.Cells["review"].Value)){MessageBox.Show(this,"请逐项检查黄色待确认元件，确认类别和处理方式后取消待确认勾选。");return;}if((a=="忽略无厚度内容"||a=="不输出此元件")&&Convert.ToInt32(r["solid_count"])>0&&!extreme.Checked){MessageBox.Show(this,"有实体的元件不能删除，请选择保留或简化。");return;}r["action"]=a=="保留原形"?"keep":(a=="忽略无厚度内容"||a=="不输出此元件")?"omit":"envelope";r["simplify_shape"]=a=="圆柱"?"cylinder":a=="长方体"?"box":"auto";r["review"]=false;}
    if(extreme.Checked)PcbRules.Apply(plan,(int)count.Value,false,new[]{"auto","box","cylinder"}[shape.SelectedIndex],true);
-   using(var d=new SaveFileDialog { Filter="轻量 STEP 模型|*.stp",FileName=Path.GetFileNameWithoutExtension(input.Text)+(extreme.Checked?"_极致轻量":"")+(connect.Checked?"_轻量单实体.stp":"_轻量化.stp"),OverwritePrompt=true })
+   bool wantStep=exportStep.Checked,wantPart=exportPart.Checked;
+   using(var d=new SaveFileDialog { Filter=wantStep?"轻量 STEP 模型|*.stp":"SolidWorks 零件|*.SLDPRT",FileName=Path.GetFileNameWithoutExtension(input.Text)+(extreme.Checked?"_极致轻量":"")+(connect.Checked?"_轻量单实体":"_轻量化"),OverwritePrompt=true })
    {
-    if(d.ShowDialog(this)!=DialogResult.OK)return;if(File.Exists(d.FileName)){MessageBox.Show(this,"请选择一个新文件名，避免覆盖已有模型。");return;}
-    swOpen.Enabled=false;result=d.FileName;File.WriteAllText(Path.Combine(job,"plan.json"),PcbRules.Json.Serialize(plan),new UTF8Encoding(false));SetBusy(true);open.Enabled=false;summary.Text="正在生成并回读检查轻量模型…";
+    if(d.ShowDialog(this)!=DialogResult.OK)return;
+    if(PcbOutputs.Targets(d.FileName,wantStep,wantPart).Any(File.Exists)){MessageBox.Show(this,"所选格式中已有同名文件，请使用新的文件名。");return;}
+    string stage=Path.Combine(job,"exports",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(stage);string stagedStep=Path.Combine(stage,"model.stp");
+    swOpen.Enabled=false;result=null;File.WriteAllText(Path.Combine(job,"plan.json"),PcbRules.Json.Serialize(plan),new UTF8Encoding(false));SetBusy(true);open.Enabled=false;summary.Text="喵师傅正在施工：生成并检查轻量模型…";
     try{
-     if(connect.Checked){
-      await BuildNative(result);
-      summary.Text="已生成 STEP 和 SolidWorks 零件：1 个实体、0 项几何错误；导入、保存重开及元件保留检查通过。";
-     }else{
-      await Run("build --work "+Quote(job)+" --output "+Quote(result)+" --multi-solid --pcurves");
-      var report=PcbRules.Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(Path.Combine(job,"report.json")));
-      summary.Text="已生成："+report["solid_count"]+" 个实体，"+report["final_faces"]+" 个面，"+(Convert.ToDouble(report["output_bytes"])/1048576).ToString("0.0")+" MB。几何校验通过；SolidWorks 实测另行记录。";
-      File.Copy(Path.Combine(job,"report.json"),result+".report.json",false);
+     if(connect.Checked)await BuildNative(stagedStep);
+     else if(wantPart)await BuildNative(stagedStep,true);
+     else{
+      await Run("build --work "+Quote(job)+" --output "+Quote(stagedStep)+" --multi-solid --pcurves");
      }
-     open.Enabled=true;swOpen.Enabled=connect.Checked;
+     var paths=PcbOutputs.Publish(stagedStep,d.FileName,wantStep,wantPart);result=paths.First();
+     summary.Text="已生成完成："+string.Join("、",paths.Select(Path.GetFileName))+"。位置："+Path.GetDirectoryName(result);
+     log.AppendText("\r\n生成完成：\r\n"+string.Join("\r\n",paths));open.Enabled=true;swOpen.Enabled=wantPart;
     }
     catch(Exception ex){summary.Text=ex.Message;}finally{SetBusy(false);}
    }

@@ -1,0 +1,22 @@
+name: Publish verified Master Miao 1.6.0
+on:
+  push:
+    branches: [main]
+    paths: ['releases/v1.6.0/**', '.github/workflows/publish-160.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify installer checksum
+        working-directory: releases/v1.6.0
+        run: sha256sum -c SHA256SUMS.txt
+      - name: Publish verified installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view v1.6.0 >/dev/null 2>&1 || gh release create v1.6.0 --target "$GITHUB_SHA" --title "喵师傅 1.6.0 — 统一界面、PCB 双格式与焊接标牌" --notes-file releases/v1.6.0/README.md
+          gh release upload v1.6.0 releases/v1.6.0/MasterMiao-1.6.0-Setup-x64.exe releases/v1.6.0/SHA256SUMS.txt --clobber

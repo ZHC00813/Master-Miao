@@ -1,8 +1,8 @@
-当前安装版本：**[1.5.0 — 焊接体分组](releases/v1.5.0/README.md)**。包含经验证的1.4.6核心与PCB轻量化、焊接体分组模块；根目录历史主程序源码版本说明见该发布页。
+当前安装版本：**[1.6.0 — 统一界面与双格式输出](releases/v1.6.0/README.md)**。包含经验证的1.4.6核心与PCB轻量化、焊接体分组模块；根目录历史主程序源码版本说明见该发布页。
 
 # 喵师傅 Master Miao
 
-**[下载最新 Windows x64 安装程序](https://github.com/ZHC00813/Master-Miao/releases/tag/v1.5.0)**
+**[下载最新 Windows x64 安装程序](https://github.com/ZHC00813/Master-Miao/releases/tag/v1.6.0)**
 
 [阅读 1.4.1 中文功能说明](releases/v1.4.1/喵师傅-1.4.1-功能说明.txt)。实体列表支持右键反选、隐藏、行高亮和多行备注。
 

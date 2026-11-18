@@ -188,16 +188,21 @@ def audit(args):
     from OCP.TopAbs import TopAbs_IN,TopAbs_ON
     manifest=json.loads(args.manifest.read_text(encoding='utf-8-sig'));shape=read_step(args.input)
     solids=m.parts(shape,m.TopAbs_SOLID)
-    if len(solids)!=1 or not m.BRepCheck_Analyzer(shape).IsValid():raise ValueError('Final STEP is not a valid single solid')
-    check=BRepClass3d_SolidClassifier(solids[0]);count=0
+    expected=len(manifest['witnesses']) if args.multi else 1
+    if len(solids)!=expected or not m.BRepCheck_Analyzer(shape).IsValid():raise ValueError('Final STEP body count or geometry invalid')
+    checks=[BRepClass3d_SolidClassifier(s) for s in solids];count=0
     for record in manifest['witnesses']:
         for point in record['points']:
-            check.Perform(m.gp_Pnt(*point),1e-5);count+=1
-            if check.State() not in [TopAbs_IN,TopAbs_ON]:raise ValueError('Lost material in component: '+record['component'])
+            count+=1
+            present=False
+            for check in checks:
+                check.Perform(m.gp_Pnt(*point),1e-5)
+                if check.State() in [TopAbs_IN,TopAbs_ON]:present=True;break
+            if not present:raise ValueError('Lost material in component: '+record['component'])
     actual=m.bbox(shape,True)
     if max(abs(a-b) for a,b in zip(actual,manifest['bounds_mm']))>.061:
         raise ValueError('Final bounds exceed the micro-connector allowance')
-    report=dict(solid_count=1,valid=True,volume_mm3=m.volume(shape),bbox_mm=actual,final_faces=len(m.parts(shape,m.TopAbs_FACE)),
+    report=dict(solid_count=len(solids),valid=True,volume_mm3=m.volume(shape),bbox_mm=actual,final_faces=len(m.parts(shape,m.TopAbs_FACE)),
                 output_bytes=args.input.stat().st_size,preservation_samples=count,sha256=m.sha256(args.input))
     m.write_json(args.work/'geometry-audit.json',report);print('PASS RETENTION',count,flush=True)
 
@@ -206,7 +211,7 @@ def main():
     sub=parser.add_subparsers(dest='command',required=True)
     p=sub.add_parser('prepare');p.add_argument('--work',type=pathlib.Path,required=True);p.add_argument('--output',type=pathlib.Path,required=True);p.add_argument('--clean',action='store_true')
     p=sub.add_parser('contacts');p.add_argument('--input',type=pathlib.Path,required=True);p.add_argument('--work',type=pathlib.Path,required=True)
-    p=sub.add_parser('audit');p.add_argument('--input',type=pathlib.Path,required=True);p.add_argument('--manifest',type=pathlib.Path,required=True);p.add_argument('--work',type=pathlib.Path,required=True)
+    p=sub.add_parser('audit');p.add_argument('--multi',action='store_true');p.add_argument('--input',type=pathlib.Path,required=True);p.add_argument('--manifest',type=pathlib.Path,required=True);p.add_argument('--work',type=pathlib.Path,required=True)
     args=parser.parse_args();m.init_ocp(args.ocp_path);globals()[args.command](args)
 
 if __name__=='__main__':main()
