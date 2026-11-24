@@ -1,15 +1,21 @@
 using System;using System.IO;using System.Reflection;using System.Runtime.CompilerServices;using System.Windows.Forms;using SWBodyOrganizer;using MasterMiao.Pcb;using MasterMiao.Weld;
-[assembly:AssemblyVersion("1.6.0.0")]
-[assembly:AssemblyFileVersion("1.6.0.0")]
+[assembly:AssemblyVersion("1.6.1.0")]
+[assembly:AssemblyFileVersion("1.6.1.0")]
 [assembly:AssemblyProduct("喵师傅 Master Miao")]
 class ReleaseLauncher{
-[STAThread]static int Main(){try{
-Assembly.LoadFrom(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"Core","MasterMiao.exe"));
+[STAThread]static int Main(string[] args){try{
+var core=Assembly.LoadFrom(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"Core","MasterMiao.exe"));
+if(args.Length>0){
+ if(string.Equals(args[0],"--worker",StringComparison.OrdinalIgnoreCase)&&args.Length!=3){Console.Error.WriteLine("Invalid worker arguments: expected request and response paths.");return 64;}
+ // Invoke the existing entry point in this process so Data paths, dependency resolution,
+ // progress streams, STA threading and worker exit codes stay identical to the UI host.
+ return Convert.ToInt32(core.EntryPoint.Invoke(null,new object[]{args}));
+}
 return Run();
-}catch(Exception e){MessageBox.Show(e.GetBaseException().Message,"喵师傅启动失败");return 1;}}
+}catch(Exception e){if(args.Length>0)Console.Error.WriteLine(e.GetBaseException().ToString());else MessageBox.Show(e.GetBaseException().Message,"喵师傅启动失败");return 1;}}
 [MethodImpl(MethodImplOptions.NoInlining)]static int Run(){
 Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
 var assembly=typeof(ModuleRegistry).Assembly;
 foreach(string name in new[]{"AppPaths","UserSettingsStore"}){var type=assembly.GetType("SWBodyOrganizer."+name,true);type.GetMethod(name=="AppPaths"?"Ensure":"Load",BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Static).Invoke(null,null);}
-var registry=new ModuleRegistry();foreach(var item in ModuleRegistry.BuiltIn().CreateModules()){var module=item;registry.Register(()=>new StyledModule(module));}registry.Register(()=>new StyledModule(new PcbModule()));registry.Register(()=>new StyledModule(new WeldModule()));var shell=new WorkspaceShell(registry);shell.Text="喵师傅 Master Miao · V1.6.0";Application.Run(shell);return 0;
+var registry=new ModuleRegistry();foreach(var item in ModuleRegistry.BuiltIn().CreateModules()){var module=item;registry.Register(()=>new StyledModule(module));}registry.Register(()=>new StyledModule(new PcbModule()));registry.Register(()=>new StyledModule(new WeldModule()));var shell=new WorkspaceShell(registry);shell.Text="喵师傅 Master Miao · V1.6.1";Application.Run(shell);return 0;
 }}
