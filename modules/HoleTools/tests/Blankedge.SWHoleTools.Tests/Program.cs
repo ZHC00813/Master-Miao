@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Drawing;
@@ -56,9 +56,9 @@ namespace Blankedge.SWHoleTools.Tests
             Environment.SetEnvironmentVariable("TEMP", sandbox);
             Environment.SetEnvironmentVariable("TMP", sandbox);
 
-            Run("Layout_AutoSmall_A4_1to1", LayoutAutoSmall);
+            Run("Layout_AutoSmall_A2_1to1", LayoutAutoSmall);
             Run("Layout_AutoMedium_A0_1to1", LayoutAutoMedium);
-            Run("Layout_AutoLarge_A2_1to5", LayoutAutoLarge);
+            Run("Layout_AutoLarge_A1_1to5", LayoutAutoLarge);
             Run("Layout_FixedA4_RejectOverflow", LayoutRejectOverflow);
             Run("DryRun_ShaftHighConfidence", DryRunShaftHighConfidence);
             Run("DryRun_ShaftCandidateReview", DryRunShaftCandidateReview);
@@ -69,6 +69,7 @@ namespace Blankedge.SWHoleTools.Tests
             Run("DrawingQueue_ImportPrefixFormatsScaleUi", () => DrawingQueueTests.Run(sandbox));
             Run("Annotation_ThreadedThrough", AnnotationThreadedThrough);
             Run("Annotation_NormalBlind", AnnotationNormalBlind);
+            Run("Annotation_EndTypeFromGeometry", ThreadTerminationRegression.Run);
             Run("Tag_ApplyAndTemplate", TagApplyAndTemplate);
             Run("TagCatalog_SandboxPersistence", TagCatalogPersistence);
             Run("TagCatalog_UniqueRgbRoundTrip", TagCatalogUniqueRgbRoundTrip);
@@ -170,7 +171,7 @@ namespace Blankedge.SWHoleTools.Tests
         private static void LayoutAutoSmall()
         {
             DrawingLayoutPlan plan = Plan(0.10, 0.05, 0.02, new BatchExportOptions());
-            Equal(PaperChoice.A4, plan.Paper.Choice);
+            Equal(PaperChoice.A2, plan.Paper.Choice);
             Near(1.0, plan.Scale);
             True(plan.Fits, "small model must fit");
             Equal(4, plan.Views.Count);
@@ -187,7 +188,7 @@ namespace Blankedge.SWHoleTools.Tests
         private static void LayoutAutoLarge()
         {
             DrawingLayoutPlan plan = Plan(1.20, 0.60, 0.30, new BatchExportOptions());
-            Equal(PaperChoice.A2, plan.Paper.Choice);
+            Equal(PaperChoice.A1, plan.Paper.Choice);
             Near(0.2, plan.Scale);
             True(plan.Fits, "large model must fit at reduced scale");
         }
@@ -329,7 +330,7 @@ namespace Blankedge.SWHoleTools.Tests
             };
             string text = new HoleAnnotationGenerator().Generate(hole);
             True(text.Contains("M5×0.8-6H"), text);
-            True(text.Contains("THRU"), text);
+            True(text.Contains("螺纹通孔"), text);
         }
 
         private static void AnnotationNormalBlind()
@@ -363,7 +364,7 @@ namespace Blankedge.SWHoleTools.Tests
             Near(0.0008, hole.Pitch);
             Equal(255, hole.ColorRed);
             Equal(0, hole.ColorGreen);
-            Equal("M5-6H Blind", hole.AnnotationText);
+            Equal("M5-6H 螺纹盲孔", hole.AnnotationText);
         }
 
         private static void TagCatalogPersistence()

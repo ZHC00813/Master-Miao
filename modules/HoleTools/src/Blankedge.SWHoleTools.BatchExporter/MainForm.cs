@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -28,6 +28,12 @@ namespace Blankedge.SWHoleTools.BatchExporter
         private readonly CheckBox _slddrw = new CheckBox { Text = "SLDDRW", Checked = true, AutoSize = true };
         private readonly CheckBox _pdf = new CheckBox { Text = "PDF", AutoSize = true };
         private readonly CheckBox _dwg = new CheckBox { Text = "DWG", AutoSize = true };
+        private readonly ComboBox _category = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
+        private readonly TextBox _material = new TextBox();
+        private readonly TextBox _finish = new TextBox();
+        private readonly TextBox _manufacturingNotes = new TextBox();
+        private readonly CheckBox _step = new CheckBox { Text = "STEP", AutoSize = true };
+        private readonly CheckBox _copyModel = new CheckBox { Text = "配套 SLDPRT（保留孔标签）", AutoSize = true };
         private readonly CheckBox _dxf = new CheckBox { Text = "DXF", AutoSize = true };
         private Control _editor;
         private readonly CheckBox _annotations = new CheckBox { Text = "读取孔标签并添加工程图标注", Checked = true, AutoSize = true };
@@ -47,7 +53,7 @@ namespace Blankedge.SWHoleTools.BatchExporter
         public MainForm()
         {
             _presetStore = ViewPresetStore.Load();
-            Text = "Blankedge SOLIDWORKS 批量工程图导出";
+            Text = "喵师傅自动工程图";
             StartPosition = FormStartPosition.CenterScreen;
             MinimumSize = new Size(1080, 700);
             Size = new Size(1180, 760);
@@ -170,11 +176,11 @@ namespace Blankedge.SWHoleTools.BatchExporter
         {
             var group = new GroupBox { Text = "工程图设置", Dock = DockStyle.Fill, Padding = new Padding(10) };
             var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
-            var layout = new TableLayoutPanel { Dock = DockStyle.Top, Height = 486, ColumnCount = 3, RowCount = 12 };
+            var layout = new TableLayoutPanel { Dock = DockStyle.Top, Height = 714, ColumnCount = 3, RowCount = 18 };
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 115));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
-            for (int i = 0; i < 12; i++) layout.RowStyles.Add(new RowStyle(SizeType.Absolute, i == 10 ? 54 : 38));
+            for (int i = 0; i < 18; i++) layout.RowStyles.Add(new RowStyle(SizeType.Absolute, i == 10 ? 54 : 38));
 
             var outputBrowse = new Button { Text = "浏览…", Dock = DockStyle.Fill };
             outputBrowse.Click += (sender, args) => BrowseOutputDirectory();
@@ -219,6 +225,20 @@ namespace Blankedge.SWHoleTools.BatchExporter
             };
             layout.Controls.Add(hint, 1, 11);
             layout.SetColumnSpan(hint, 2);
+            _category.Items.AddRange(Enum.GetNames(typeof(ProductionCategory)));
+            _category.SelectedIndex = 0;
+            _category.SelectedIndexChanged += (sender, e) =>
+            {
+                bool production = _category.SelectedIndex > 0; if (production) { _slddrw.Checked = _pdf.Checked = _dwg.Checked = true; _copyModel.Checked = _category.Text == "木板件"; _step.Checked = _category.Text != "木板件"; } _slddrw.Enabled = _pdf.Enabled = _dwg.Enabled = !production; _copyModel.Enabled = _category.Text != "焊接"; if (production && _category.Text != "木板件") { _finish.Text = _category.Text == "轴件" ? "" : "白色喷粉喷漆"; _manufacturingNotes.Text = "切割后打磨干净披锋和毛刺。"; } else if (_category.Text == "木板件") { _finish.Text = ""; _manufacturingNotes.Text = ""; }
+            };
+            AddRow(layout, 12, "生产类别", _category, null);
+            AddRow(layout, 13, "材料说明", _material, null);
+            AddRow(layout, 14, "表面处理", _finish, null);
+            AddRow(layout, 15, "加工备注", _manufacturingNotes, null);
+            var models = new FlowLayoutPanel { Dock = DockStyle.Fill };
+            models.Controls.AddRange(new Control[] { _step, _copyModel });
+            AddRow(layout, 16, "配套模型", models, null);
+            AddRow(layout, 17, "", new Label { Text = "材料、工艺按实际填写；生成后复核尺寸与孔注释。", ForeColor = Color.DimGray, AutoSize = true }, null);
             scroll.Controls.Add(layout);
             group.Controls.Add(scroll);
             return group;
@@ -277,6 +297,12 @@ namespace Blankedge.SWHoleTools.BatchExporter
             return new BatchExportOptions
             {
                 OutputDirectory = _outputDirectory.Text.Trim(),
+                Category = (ProductionCategory)Enum.Parse(typeof(ProductionCategory), _category.Text),
+                MaterialText = _material.Text.Trim(),
+                FinishText = _finish.Text.Trim(),
+                ManufacturingNotes = _manufacturingNotes.Text.Trim(),
+                SaveStep = _step.Checked,
+                CopyPartModel = _copyModel.Checked,
                 DrawingTemplatePath = _templatePath.Text.Trim(),
                 Paper = paper,
                 NamePrefix = _prefix.Text,
@@ -405,7 +431,7 @@ namespace Blankedge.SWHoleTools.BatchExporter
             var existing = new HashSet<string>(_jobs.Select(job => job.SourcePath), StringComparer.OrdinalIgnoreCase);
             foreach (string path in PartFileDiscovery.Collect(paths, AppendLog))
             {
-                if (!File.Exists(path) || !string.Equals(Path.GetExtension(path), ".sldprt", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!File.Exists(path) || !PartFileDiscovery.IsSupported(path)) continue;
                 string full = Path.GetFullPath(path);
                 if (existing.Add(full)) _jobs.Add(new DrawingExportJob { SourcePath = full, ExportName = _prefix.Text + Path.GetFileNameWithoutExtension(full) });
             }
@@ -413,7 +439,7 @@ namespace Blankedge.SWHoleTools.BatchExporter
 
         private void BrowseParts()
         {
-            using (var dialog = new OpenFileDialog { Filter = "SOLIDWORKS 零件 (*.sldprt)|*.sldprt", Multiselect = true, CheckFileExists = true })
+            using (var dialog = new OpenFileDialog { Filter = "SOLIDWORKS 零件和装配体|*.sldprt;*.sldasm", Multiselect = true, CheckFileExists = true })
             {
                 if (dialog.ShowDialog(this) == DialogResult.OK) AddFiles(dialog.FileNames);
             }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -54,7 +54,7 @@ namespace Blankedge.SWHoleTools.BatchExporter.Model
                 try
                 {
                     if (!File.Exists(job.SourcePath)) errors.Add("源文件不存在：" + job.SourcePath);
-                    if (!string.Equals(Path.GetExtension(job.SourcePath), ".sldprt", StringComparison.OrdinalIgnoreCase)) errors.Add("不是 SLDPRT：" + job.SourcePath);
+                    if (!PartFileDiscovery.IsSupported(job.SourcePath)) errors.Add("不是 SolidWorks 零件或装配体：" + job.SourcePath);
                     var options = job.CreateOptions(common);
                     foreach (string path in options.OutputPaths(job.SourcePath))
                         if (!outputs.Add(Path.GetFullPath(path))) errors.Add("导出重名：" + path + "。请分批导出或调整原零件名称。");
@@ -67,13 +67,14 @@ namespace Blankedge.SWHoleTools.BatchExporter.Model
 
     public static class PartFileDiscovery
     {
+        public static bool IsSupported(string path) => string.Equals(Path.GetExtension(path), ".sldprt", StringComparison.OrdinalIgnoreCase) || string.Equals(Path.GetExtension(path), ".sldasm", StringComparison.OrdinalIgnoreCase);
         public static IList<string> Collect(IEnumerable<string> inputs, Action<string> warning)
         {
             var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (string input in inputs ?? Enumerable.Empty<string>())
             {
                 if (Directory.Exists(input)) Visit(input, result, warning);
-                else if (File.Exists(input) && string.Equals(Path.GetExtension(input), ".sldprt", StringComparison.OrdinalIgnoreCase)) result.Add(Path.GetFullPath(input));
+                else if (File.Exists(input) && IsSupported(input)) result.Add(Path.GetFullPath(input));
                 else warning?.Invoke("跳过不存在或不支持的路径：" + input);
             }
             return result.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToList();
@@ -84,7 +85,7 @@ namespace Blankedge.SWHoleTools.BatchExporter.Model
             {
                 if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) { warning?.Invoke("跳过链接目录：" + directory); return; }
                 foreach (string file in Directory.GetFiles(directory))
-                    if (string.Equals(Path.GetExtension(file), ".sldprt", StringComparison.OrdinalIgnoreCase)) result.Add(Path.GetFullPath(file));
+                    if (IsSupported(file)) result.Add(Path.GetFullPath(file));
                 foreach (string child in Directory.GetDirectories(directory)) Visit(child, result, warning);
             }
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)

@@ -84,8 +84,7 @@ namespace Blankedge.SWHoleTools.Attributes
                 }
 
                 int saved = 0;
-                IList<IFace2> targets = group.Cylinders.Select(item => item.Face)
-                    .Concat(group.Cones.Select(item => item.Face))
+                IList<IFace2> targets = group.MarkedFaces
                     .GroupBy(SwMath.GetComIdentity)
                     .Select(items => items.First())
                     .ToList();
@@ -193,7 +192,7 @@ namespace Blankedge.SWHoleTools.Attributes
             }
 
             int removed = 0;
-            foreach (IFace2 face in group.Cylinders.Select(item => item.Face).Concat(group.Cones.Select(item => item.Face)))
+            foreach (IFace2 face in group.MarkedFaces)
             {
                 try
                 {

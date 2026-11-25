@@ -26,7 +26,9 @@ namespace Blankedge.SWHoleTools.UI
         private readonly Label rgb = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft };
         private readonly TreeView holes = new TreeView { Dock = DockStyle.Fill, CheckBoxes = true, HideSelection = false };
         private IModelDoc2 scanned;
+        private readonly List<HoleSelectionContext> markedContexts = new List<HoleSelectionContext>();
         private bool checking;
+        private readonly Label markedCount = new Label { AutoSize = true, Text = "已标注孔：待读取", ForeColor = Color.DarkBlue };
         private readonly List<Entry> entries = new List<Entry>();
         private readonly CheckBox grouped = new CheckBox { Text = "按孔型分组", AutoSize = true };
         private readonly TextBox filter = new TextBox { Width = 210 };
@@ -61,10 +63,15 @@ namespace Blankedge.SWHoleTools.UI
             var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, AutoScroll = true };
             if (installButton != null) actions.Controls.Add(installButton);
             AddButton(actions, "扫描所选实体 / 面 / 孔", Scan);
+            AddButton(actions, "选中面添加为一个孔", AddManual);
             AddButton(actions, "应用标签并上色", Apply);
+            AddButton(actions, "读取已标注孔", LoadMarked);
+            AddButton(actions, "清除勾选标注", ClearMarked);
             AddButton(actions, "标签管理", ManageTags);
+            AddButton(actions, "保存标注零件", SaveMarkedParts);
             root.Controls.Add(actions, 0, 2);
             var filters = new FlowLayoutPanel { Dock = DockStyle.Fill };
+            filters.Controls.Add(markedCount);
             filters.Controls.Add(grouped);
             filters.Controls.Add(irregular);
             irregular.CheckedChanged += (sender,e) => RenderEntries();
@@ -93,6 +100,12 @@ namespace Blankedge.SWHoleTools.UI
             };
             holes.AfterSelect += (sender, e) =>
             {
+                if (e.Action == TreeViewAction.ByMouse) return;
+                try { Locate(e.Node); } catch (Exception ex) { status.Text = ex.Message; }
+            };
+            holes.NodeMouseClick += (sender, e) =>
+            {
+                if (e.Button != MouseButtons.Left) return;
                 try { Locate(e.Node); } catch (Exception ex) { status.Text = ex.Message; }
             };
             root.Controls.Add(status, 0, 5);
@@ -105,10 +118,19 @@ namespace Blankedge.SWHoleTools.UI
                 selection.ColumnStyles[2].Width = 32;
                 selection.ColumnStyles[3].Width = 0;
                 actions.WrapContents = true;
-                root.RowStyles[2].Height = 118;
+                root.RowStyles[2].Height = 302;
                 root.RowStyles[3].Height = 64;
             }
             ReloadTags();
+            var menu = new ContextMenuStrip();
+            foreach (var label in new[] { "全选", "全不选", "反选" })
+            {
+                string action = label;
+                menu.Items.Add(label, null, (s,e) => { foreach (var n in holes.Nodes.Cast<TreeNode>().SelectMany(n => n.Tag != null ? new[] { n } : n.Nodes.Cast<TreeNode>())) n.Checked = action == "全选" || (action == "反选" && !n.Checked); });
+            }
+            menu.Items.Add("清除勾选标注", null, (s,e) => { try { ClearMarked(); } catch(Exception ex) { status.Text = ex.Message; } });
+            holes.ContextMenuStrip = menu;
+            VisibleChanged += (s,e) => { if (Visible) { try { LoadMarked(); } catch(Exception ex) { status.Text = ex.Message; } } };
         }
         private void AddButton(Control parent, string text, Action action)
         {
@@ -146,9 +168,12 @@ namespace Blankedge.SWHoleTools.UI
         }
         private sealed class Entry
         {
+            public HoleSelectionContext Context;
             public string Reference;
+            public string[] WallReferences;
             public string Group;
-            public bool Review, Checked;
+            public string MarkId;
+            public bool Review, Checked, Manual;
             public int Number;
         }
 
@@ -169,7 +194,7 @@ namespace Blankedge.SWHoleTools.UI
                     }
                     foreach (var item in items)
                     {
-                        var node = (parent?.Nodes ?? holes.Nodes).Add("孔 " + item.Number + (parent == null ? " · " + item.Group : ""));
+                        var node = (parent?.Nodes ?? holes.Nodes).Add("孔 " + item.Number + (item.Context?.Component == null ? "" : " · " + item.Context.Component.Name2) + (parent == null ? " · " + item.Group : ""));
                         node.Tag = item;
                         node.Checked = item.Checked;
                         if (item.Review) node.ForeColor = Color.DarkOrange;
@@ -187,19 +212,26 @@ namespace Blankedge.SWHoleTools.UI
             holes.Nodes.Clear();
             entries.Clear();
             scanned = null;
-            
+
             {
                 var app = application();
                 var doc = app.IActiveDoc2;
-                if (!(doc is IPartDoc)) throw new InvalidOperationException("请打开零件并选择实体、平面或多个孔壁。");
-                var selection = (ISelectionMgr)doc.SelectionManager;
-                int count = selection.GetSelectedObjectCount2(-1);
-                if (count == 0) throw new InvalidOperationException("请在 SW 选择一个实体、平面或多个孔壁，再扫描。");
+                scanned = doc;
+                foreach (var context in HoleSelectionContext.Read(doc)) ScanContext(app, context);
+                RenderEntries();
+                UpdateMarkedCount();
+                status.Text = "共 " + entries.Count + " 项。点击高亮；标注写入原零件，同一零件的其他实例也会共享标注。";
+            }
+        }
+
+        private void ScanContext(ISldWorks app, HoleSelectionContext context)
+        {
+                var doc = context.Owner;
+                int firstEntry = entries.Count;
                 var faces = new List<IFace2>();
                 var unusual = new List<IFace2>();
-                for (int i = 1; i <= count; i++)
+                foreach (var item in context.Items)
                 {
-                    var item = selection.GetSelectedObject6(i, -1);
                     if (item is IBody2 body)
                     {
                         var bodyFaces=SwMath.ToComList<IFace2>(body.GetFaces()).ToList();
@@ -209,14 +241,26 @@ namespace Blankedge.SWHoleTools.UI
                     }
                     else if (item is IFace2 face && ((ISurface)face.GetSurface()).IsPlane())
                     {
+                        faces.Add(face);
                         CollectOpenings(face,faces,unusual);
                     }
                     else if (item is IFace2 selected) faces.Add(selected);
                     else throw new InvalidOperationException("请选择实体、平面或孔壁。");
                 }
                 var seen = new HashSet<long>();
-                scanned = doc;
-                int total = 0;
+                int total = entries.Count;
+                var attributes = new HoleAttributeManager(app);
+                foreach (var candidate in faces.Concat(unusual).ToList())
+                {
+                    if (seen.Contains(SwMath.GetComIdentity(candidate))) continue;
+                    var saved = attributes.Read(candidate);
+                    if (!ManualHoleService.IsManual(saved)) continue;
+                    var body = candidate.GetBody() as IBody2;
+                    var members = SwMath.ToComList<IFace2>(body.GetFaces())
+                        .Where(f => attributes.Read(f)?.HoleID == saved.HoleID).ToList();
+                    foreach (var member in members) seen.Add(SwMath.GetComIdentity(member));
+                    entries.Add(ManualEntry(doc, saved, members, ++total));
+                }
                 foreach (var face in faces.Where(IsHoleWall).Concat(unusual))
                 {
                     if (!seen.Add(SwMath.GetComIdentity(face))) continue;
@@ -224,6 +268,7 @@ namespace Blankedge.SWHoleTools.UI
                     string key = "待复核开口";
                     bool review = !result.Success;
                     IFace2 target = face;
+                    string[] wallReferences = null;
                     if (result.Success)
                     {
                         var a = result.Value;
@@ -239,13 +284,13 @@ namespace Blankedge.SWHoleTools.UI
                             (h.TerminationType == TerminationType.Through ? "通孔 · " + (h.ThroughLength * 1000).ToString("0.####") + " mm" :
                              h.TerminationType == TerminationType.Blind ? "盲孔 · " + (h.MeasuredDepth * 1000).ToString("0.####") + " mm" : "深度待复核");
                         target = a.Group.PrimaryCylinderFace;
+                        wallReferences = a.Group.Cylinders.Select(c => c.Face).Concat(a.Group.Cones.Select(c => c.Face))
+                            .Select(f => references.Create(doc, f)).Where(r => !string.IsNullOrEmpty(r)).Distinct().ToArray();
                     }
                     if (review) key += " · #" + (total + 1);
-                    entries.Add(new Entry { Reference = references.Create(doc, target), Group = key, Review = review, Number = ++total });
+                    entries.Add(new Entry { Reference = references.Create(doc, target), WallReferences = wallReferences, Group = key, Review = review, Number = ++total });
                 }
-                RenderEntries();
-                status.Text = "共 " + total + " 项。点选定位，勾选后应用标签。";
-            }
+                foreach (var entry in entries.Skip(firstEntry)) entry.Context = context;
         }
 
         private static bool IsHoleWall(IFace2 face) =>
@@ -269,6 +314,71 @@ namespace Blankedge.SWHoleTools.UI
             }
         }
 
+
+        private List<HoleSelectionContext> MarkContexts(IModelDoc2 doc)
+        {
+            if (doc is IPartDoc) return new List<HoleSelectionContext> { new HoleSelectionContext { Owner = doc, Configuration = doc.ConfigurationManager.ActiveConfiguration.Name } };
+            return HoleSelectionContext.Read(doc).GroupBy(c => SwMath.GetComIdentity(c.Owner)).Select(g => g.First()).ToList();
+        }
+        private void LoadMarked()
+        {
+            var app = application(); var doc = app.IActiveDoc2;
+            var contexts = MarkContexts(doc);
+            var found = new List<Entry>(); var attributes = new HoleAttributeManager(app);
+            foreach (var context in contexts)
+            {
+                context.Validate();
+                var faces = SwMath.ToComList<IBody2>(((IPartDoc)context.Owner).GetBodies2(0,false)).SelectMany(b => SwMath.ToComList<IFace2>(b.GetFaces()));
+                foreach (var group in faces.Select(f => new { Face=f, Hole=attributes.Read(f) }).Where(x=>x.Hole!=null && !string.IsNullOrWhiteSpace(x.Hole.HoleID)).GroupBy(x=>x.Hole.HoleID))
+                {
+                    var h=group.First().Hole; var members=group.Select(x=>x.Face).ToList();
+                    var item=ManualEntry(context.Owner,h,members,found.Count+1);
+                    item.Manual=ManualHoleService.IsManual(h); item.MarkId=h.HoleID; item.Context=context;
+                    string end = h.TerminationType == TerminationType.Blind ? "盲孔" :
+                        (h.TerminationType == TerminationType.Through || h.TerminationType == TerminationType.InterBody) ? "通孔" : "通盲待复核";
+                    item.Group=(string.IsNullOrWhiteSpace(h.TagName)?h.ThreadSize:h.TagName)+" · "+end;
+                    if (h.TerminationType == TerminationType.Blind)
+                        item.Group += " · 底孔深 " + (h.MeasuredDepth*1000).ToString("0.###") + " mm" +
+                            (h.HoleType != HoleSemanticType.Threaded ? "" : h.ThreadDepth>0 ? " · 螺纹深 " + (h.ThreadDepth*1000).ToString("0.###") + " mm" : " · 螺纹深未设置");
+                    found.Add(item);
+                }
+            }
+            markedContexts.Clear(); markedContexts.AddRange(contexts);
+            entries.Clear(); entries.AddRange(found); scanned=doc; grouped.Checked=true; RenderEntries();
+            markedCount.Text="已标注孔："+found.Count+" 个 / "+contexts.Count+" 个零件";
+            status.Text="按标注属性读取，已退色的记录也会列出。点击高亮，勾选后清除；修改后请保存标注零件。";
+        }
+        private void ClearMarked() => ClearMarkedSelection(true);
+        private void ClearMarkedSelection(bool confirm)
+        {
+            var app=application(); var doc=app.IActiveDoc2; CheckDocument(doc);
+            var selected=entries.Where(x=>x.Checked && !string.IsNullOrEmpty(x.MarkId)).ToList();
+            if(selected.Count==0) throw new InvalidOperationException("请先读取已标注孔，并勾选要清除的孔。");
+            foreach(var item in selected) { item.Context.Validate(); Resolve(doc,item); }
+            if(confirm && MessageBox.Show(this,"清除所选 "+selected.Count+" 个孔的标注属性和颜色？标签库保留。","清除孔标注",MessageBoxButtons.OKCancel)!=DialogResult.OK)return;
+            var attributes=new HoleAttributeManager(app);
+            foreach(var item in selected)
+            {
+                var owner=item.Context.Owner;
+                var members=item.WallReferences.Select(r=>references.Resolve(owner,r,out _) as IFace2).ToList();
+                if(members.Any(f=>f==null))throw new InvalidOperationException("孔面已变化，请刷新清单。");
+                var group=ManualHoleService.Group(members);
+                attributes.Clear(group);
+                if(members.Any(f=>attributes.Read(f)!=null))throw new InvalidOperationException("标注属性未完全清除，请保留现场并重试。");
+                new HoleColorManager().Clear(group,owner);
+            }
+            doc.GraphicsRedraw2(); LoadMarked();
+            status.Text="已清除 "+selected.Count+" 个孔的属性和颜色；请点击保存标注零件。";
+        }
+
+        private void UpdateMarkedCount()
+        {
+            var app=application();var doc=app.IActiveDoc2;
+            var owners=entries.Select(e=>e.Context?.Owner ?? doc).GroupBy(SwMath.GetComIdentity).Select(g=>g.First()).ToList();
+            var attrs=new HoleAttributeManager(app);
+            markedCount.Text="已标注孔："+owners.Sum(o=>attrs.Enumerate(o).Count())+" 个 / "+owners.Count+" 个零件";
+        }
+
         private void CheckDocument(IModelDoc2 doc)
         {
             if (doc == null || scanned == null || SwMath.GetComIdentity(doc) != SwMath.GetComIdentity(scanned))
@@ -277,23 +387,95 @@ namespace Blankedge.SWHoleTools.UI
 
         private IFace2 Resolve(IModelDoc2 doc, Entry entry)
         {
-            var face = references.Resolve(doc, entry.Reference, out _) as IFace2;
+            entry.Context?.Validate();
+            var face = references.Resolve(entry.Context?.Owner ?? doc, entry.Reference, out _) as IFace2;
             if (face == null) throw new InvalidOperationException("无法定位原孔面，请重新扫描。");
             return face;
         }
 
         private void Locate(TreeNode node)
         {
-            
+
             {
                 var app = application();
                 var doc = app.IActiveDoc2;
                 CheckDocument(doc);
                 var items = node.Tag != null ? new[] { node } : node.Nodes.Cast<TreeNode>();
                 doc.ClearSelection2(true);
+                int selectedCount = 0;
+                var seen = new HashSet<long>();
                 foreach (var item in items)
-                    ((IEntity)Resolve(doc, (Entry)item.Tag)).Select4(true, null);
+                {
+                    var entry = (Entry)item.Tag;
+                    entry.Context?.Validate();
+                    var refs = entry.WallReferences != null && entry.WallReferences.Length > 0
+                        ? entry.WallReferences : new[] { entry.Reference };
+                    foreach (string reference in refs)
+                    {
+                        var face = references.Resolve(entry.Context?.Owner ?? doc, reference, out _) as IFace2;
+                        if (face != null && entry.Context?.Component != null) face = entry.Context.Component.GetCorrespondingEntity(face) as IFace2;
+                        if (face == null) continue;
+                        if (seen.Add(SwMath.GetComIdentity(face)) && ((IEntity)face).Select4(true, null)) selectedCount++;
+                    }
+                }
+                doc.GraphicsRedraw2();
+                status.Text = selectedCount > 0 ? "已高亮孔壁（" + selectedCount + " 个面），原标注颜色不变。" : "无法高亮原孔，请重新扫描。";
             }
+        }
+
+        private Entry ManualEntry(IModelDoc2 doc, HoleDefinition hole, IList<IFace2> faces, int number)
+        {
+            return new Entry { Reference = references.Create(doc, faces[0]),
+                WallReferences = faces.Select(f => references.Create(doc, f)).ToArray(),
+                Group = "手动孔 · " + hole.TagName, Manual = true, Number = number };
+        }
+
+        private void AddManual()
+        {
+            var app = application();
+            var doc = app.IActiveDoc2;
+            var contexts = HoleSelectionContext.Read(doc);
+            if (contexts.Count != 1 || contexts[0].Items.Any(item => !(item is IFace2)))
+                throw new InvalidOperationException("一个手动孔请选择同一零件实例的多个面。");
+            var context = contexts[0];
+            var owner = context.Owner;
+            var faces = context.Items.Cast<IFace2>().ToList();
+            var group = ManualHoleService.Group(faces);
+            var tag = tags.SelectedItem as HoleTagDefinition;
+            if (tag == null) throw new InvalidOperationException("请先选择标签。");
+            if (MessageBox.Show(this, "将选中的 " + group.ManualFaces.Count + " 个面合为一个手动孔，并应用标签“" + tag.Name + "”？", "手动添加孔", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
+            var hole = ManualHoleService.Create(app, owner, group.ManualFaces, tag);
+            if (scanned == null || SwMath.GetComIdentity(scanned) != SwMath.GetComIdentity(doc)) entries.Clear();
+            scanned = doc;
+            var ids = new HashSet<string>(group.ManualFaces.Select(f => references.Create(owner, f)));
+            entries.RemoveAll(e => e.Context?.Owner == owner && ids.Contains(e.Reference));
+            var newEntry = ManualEntry(owner, hole, group.ManualFaces, entries.Count == 0 ? 1 : entries.Max(e => e.Number) + 1);
+            newEntry.Context = context;
+            entries.Add(newEntry);
+            RenderEntries();
+            doc.ClearSelection2(true);
+            doc.GraphicsRedraw2();
+            UpdateMarkedCount();
+            status.Text = "已将 " + group.ManualFaces.Count + " 个面记为一个手动孔并上色；请保存零件。";
+        }
+
+        private void SaveMarkedParts()
+        {
+            var host = application().IActiveDoc2;
+            CheckDocument(host);
+            var owners = entries.Select(e => e.Context?.Owner ?? host).GroupBy(SwMath.GetComIdentity).Select(g => g.First()).ToList();
+            if (owners.Count == 0) { foreach(var c in markedContexts)c.Validate(); owners = markedContexts.Select(c=>c.Owner).ToList(); }
+            if(owners.Count==0) throw new InvalidOperationException("请先读取或扫描孔。");
+            int saved = 0;
+            foreach (var owner in owners)
+            {
+                if (string.IsNullOrWhiteSpace(owner.GetPathName())) throw new InvalidOperationException("请先为新建或虚拟零件另存文件，再保存标注。");
+                int errors = 0, warnings = 0;
+                if (!owner.Save3(1, ref errors, ref warnings) || errors != 0)
+                    throw new InvalidOperationException("已保存 " + saved + " 个零件；" + owner.GetTitle() + " 保存失败，错误码 " + errors);
+                saved++;
+            }
+            status.Text = "已保存 " + saved + " 个零件中的孔标注和颜色。";
         }
 
         private void Apply()
@@ -302,7 +484,7 @@ namespace Blankedge.SWHoleTools.UI
             if (selected.Count == 0) throw new InvalidOperationException("请先勾选孔或组。");
             var tag = tags.SelectedItem as HoleTagDefinition;
             if (tag == null) throw new InvalidOperationException("请先选择标签。");
-            
+
             {
                 var app = application();
                 var doc = app.IActiveDoc2;
@@ -315,7 +497,25 @@ namespace Blankedge.SWHoleTools.UI
                     try
                     {
                         var face = Resolve(doc, (Entry)node.Tag);
-                        var result = detector.AnalyzeFace(doc, face);
+                        var entry = (Entry)node.Tag;
+                        var owner = entry.Context?.Owner ?? doc;
+                        if (entry.Manual)
+                        {
+                            var members = entry.WallReferences.Select(r => references.Resolve(owner, r, out _) as IFace2).ToList();
+                            if (members.Any(f => f == null)) throw new InvalidOperationException("手动孔的面已变化，请重新扫描。");
+                            var manualGroup = ManualHoleService.Group(members);
+                            var manualHole = attributes.Read(face);
+                            if (!ManualHoleService.IsManual(manualHole)) throw new InvalidOperationException("手动孔标注已失效，请重新扫描。");
+                            tag.ApplyTo(manualHole);
+                            var manualSaved = attributes.Save(owner, manualGroup, manualHole);
+                            if (!manualSaved.Success) throw new InvalidOperationException(manualSaved.Error);
+                            if (!new HoleColorManager().ApplyRgb(manualGroup, tag.Red, tag.Green, tag.Blue, owner)) throw new InvalidOperationException("上色失败。");
+                            entry.Group = "手动孔 · " + tag.Name;
+                            node.Checked = false;
+                            done++;
+                            continue;
+                        }
+                        var result = detector.AnalyzeFace(owner, face);
                         if (!result.Success) throw new InvalidOperationException(result.Error);
                         var analysis = result.Value;
                         var h = analysis.Definition;
@@ -323,16 +523,18 @@ namespace Blankedge.SWHoleTools.UI
                         if (existing != null) { h.HoleID = existing.HoleID; h.ThreadDepth = existing.ThreadDepth; }
                         tag.ApplyTo(h);
                         if (string.IsNullOrWhiteSpace(h.AnnotationText)) h.AnnotationText = new HoleAnnotationGenerator().Generate(h);
-                        var saved = attributes.Save(doc, analysis.Group, h);
+                        var saved = attributes.Save(owner, analysis.Group, h);
                         if (!saved.Success) throw new InvalidOperationException(saved.Error);
-                        if (!new HoleColorManager().ApplyRgb(analysis.Group, tag.Red, tag.Green, tag.Blue, doc))
+                        if (!new HoleColorManager().ApplyRgb(analysis.Group, tag.Red, tag.Green, tag.Blue, owner))
                             throw new InvalidOperationException("已写属性，上色失败。");
                         node.Checked = false;
                         done++;
                     }
                     catch (Exception ex) { status.Text = "已完成 " + done + " 项；" + node.Text + "：" + ex.Message; return; }
                 }
-                status.Text = "已标注 " + done + " 项；模型尚未保存。";
+                doc.GraphicsRedraw2();
+                UpdateMarkedCount();
+                status.Text = "已标注 " + done + " 项；请保存对应零件。相同零件实例共享标注。";
             }
         }
     }

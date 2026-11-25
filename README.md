@@ -1,8 +1,8 @@
-当前安装版本：**[1.6.1 — 修复多实体读取误开窗口](releases/v1.6.1/README.md)**。包含经验证的1.4.6核心与PCB轻量化、焊接体分组模块；根目录历史主程序源码版本说明见该发布页。
+当前安装版本：**[1.6.2 — 孔识别与盲孔标注修复](releases/v1.6.2/README.md)**。包含经验证的1.4.6核心与PCB轻量化、焊接体分组模块；根目录历史主程序源码版本说明见该发布页。
 
 # 喵师傅 Master Miao
 
-**[下载最新 Windows x64 安装程序](https://github.com/ZHC00813/Master-Miao/releases/tag/v1.6.1)**
+**[下载最新 Windows x64 安装程序](https://github.com/ZHC00813/Master-Miao/releases/tag/v1.6.2)**
 
 [阅读 1.4.1 中文功能说明](releases/v1.4.1/喵师傅-1.4.1-功能说明.txt)。实体列表支持右键反选、隐藏、行高亮和多行备注。
 

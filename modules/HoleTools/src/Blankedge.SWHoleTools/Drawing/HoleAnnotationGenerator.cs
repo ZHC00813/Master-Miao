@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Globalization;
 using System.Collections.Generic;
 using System.Linq;
@@ -20,7 +20,7 @@ namespace Blankedge.SWHoleTools.Drawing
 
             if (!string.IsNullOrWhiteSpace(hole.AnnotationText))
             {
-                return hole.AnnotationText;
+                return ExplicitThreadText(hole, hole.AnnotationText);
             }
 
             string firstLine;
@@ -38,18 +38,20 @@ namespace Blankedge.SWHoleTools.Drawing
             string secondLine;
             if (hole.TerminationType == TerminationType.Through || hole.TerminationType == TerminationType.InterBody)
             {
-                secondLine = "THRU";
+                secondLine = hole.HoleType == HoleSemanticType.Threaded ? "螺纹通孔" : "通孔";
             }
             else if (hole.MeasuredDepth > 0.0)
             {
-                secondLine = "DEPTH " + Millimeters(hole.MeasuredDepth);
+                secondLine = hole.HoleType == HoleSemanticType.Threaded
+                    ? "螺纹盲孔"
+                    : "DEPTH " + Millimeters(hole.MeasuredDepth);
             }
             else
             {
                 secondLine = hole.TerminationType.ToString().ToUpperInvariant();
             }
 
-            return firstLine + System.Environment.NewLine + secondLine;
+            return ExplicitThreadText(hole, firstLine + System.Environment.NewLine + secondLine);
         }
 
         public bool CreateSimpleNote(IModelDoc2 drawingModel, DrawingHoleMatch match)
@@ -125,8 +127,17 @@ namespace Blankedge.SWHoleTools.Drawing
                     string viewKey = (match.View.Name ?? string.Empty) + (left ? ":L" : ":R");
                     offsets.TryGetValue(viewKey, out int index);
                     offsets[viewKey] = index + 1;
-                    double x = left ? Math.Max(0.025, outline[0] - 0.035) : outline[2] + 0.008;
+                    double x = left ? Math.Max(0.035, outline[0] - 0.050) : outline[2] + 0.008;
                     double y = outline[3] - (index * 0.012);
+                    var sheet = ((IDrawingDoc)drawingModel).GetCurrentSheet() as ISheet;
+                    if (sheet != null)
+                    {
+                        double sheetWidth=0, sheetHeight=0; sheet.GetSize(ref sheetWidth,ref sheetHeight);
+                        // Keep text clear of the left binding strip, right frame and bottom title area.
+                        double textWidth=Math.Max(.045,Generate(match.Hole).Split('\n').Max(line=>line.Sum(c=>c>255?.0035:.002)));
+                        x=Math.Max(.035,Math.Min(x,sheetWidth-.015-textWidth));
+                        y=Math.Max(.085,Math.Min(y,sheetHeight-.025));
+                    }
                     annotation.SetLeader3((int)swLeaderStyle_e.swBENT, (int)swLeaderSide_e.swLS_SMART, true, false, false, false);
                     annotation.SetPosition2(x, y, 0.0);
                     if (!usedCenters.TryGetValue(match.View.Name, out var centers))
@@ -145,6 +156,28 @@ namespace Blankedge.SWHoleTools.Drawing
             return created;
         }
 
+        public static string ExplicitThreadText(HoleDefinition hole, string text)
+        {
+            if(hole?.HoleType != HoleSemanticType.Threaded || string.IsNullOrWhiteSpace(text))return text;
+            // Labels describe a reusable thread specification. They must not override
+            // the geometric end condition of the individual hole receiving the label.
+            string ending = hole.TerminationType == TerminationType.Blind ? "螺纹盲孔" :
+                (hole.TerminationType == TerminationType.Through || hole.TerminationType == TerminationType.InterBody)
+                    ? "螺纹通孔" : "螺纹孔（通盲待复核）";
+            text=System.Text.RegularExpressions.Regex.Replace(text,
+                @"(?<![非不纹])(?:螺纹)?(?:通孔|盲孔)|\b(?:THRU|THROUGH|BLIND)\b", ending,
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (hole.TerminationType == TerminationType.Blind)
+            {
+                if (hole.MeasuredDepth > 0 && !System.Text.RegularExpressions.Regex.IsMatch(text,
+                    @"底孔深|钻孔深|孔深|\bDEPTH\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                    text += System.Environment.NewLine + "底孔深 " + Millimeters(hole.MeasuredDepth) + " mm";
+                if (hole.ThreadDepth > 0 && !System.Text.RegularExpressions.Regex.IsMatch(text,
+                    @"螺纹深|攻牙深|攻丝深|THREAD\s*DEPTH", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                    text += System.Environment.NewLine + "螺纹深 " + Millimeters(hole.ThreadDepth) + " mm";
+            }
+            return text;
+        }
         private static string Millimeters(double meters)
         {
             return (meters * 1000.0).ToString("0.###", CultureInfo.InvariantCulture);

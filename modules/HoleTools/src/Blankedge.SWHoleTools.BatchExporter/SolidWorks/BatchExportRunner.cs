@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Globalization;
@@ -54,7 +54,7 @@ namespace Blankedge.SWHoleTools.BatchExporter.SolidWorks
                         try
                         {
                             int activateErrors = 0;
-                            session.Application.ActivateDoc3(originalTitle, true, 0, ref activateErrors);
+                            session.Application.ActivateDoc3(originalTitle, false, 1, ref activateErrors);
                         }
                         catch { }
                     }

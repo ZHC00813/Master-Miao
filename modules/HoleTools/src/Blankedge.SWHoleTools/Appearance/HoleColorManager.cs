@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Blankedge.SWHoleTools.Model;
@@ -31,7 +31,7 @@ namespace Blankedge.SWHoleTools.Appearance
             }
 
             bool any = false;
-            foreach (IFace2 face in group.Cylinders.Select(item => item.Face).Concat(group.Cones.Select(item => item.Face)))
+            foreach (IFace2 face in group.MarkedFaces)
             {
                 try
                 {
@@ -75,7 +75,7 @@ namespace Blankedge.SWHoleTools.Appearance
             }
 
             bool any = false;
-            foreach (IFace2 face in group.Cylinders.Select(item => item.Face).Concat(group.Cones.Select(item => item.Face)))
+            foreach (IFace2 face in group.MarkedFaces)
             {
                 try
                 {
@@ -106,7 +106,7 @@ namespace Blankedge.SWHoleTools.Appearance
                 return;
             }
 
-            foreach (IFace2 face in group.Cylinders.Select(item => item.Face).Concat(group.Cones.Select(item => item.Face)))
+            foreach (IFace2 face in group.MarkedFaces)
             {
                 try
                 {

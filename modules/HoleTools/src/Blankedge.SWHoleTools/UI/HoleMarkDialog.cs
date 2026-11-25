@@ -92,7 +92,7 @@ namespace Blankedge.SWHoleTools.UI
                 var selected = SelectedTag();
                 if (selected != null)
                 {
-                    var values = new HoleDefinition { TerminationType = _hole.TerminationType, ThreadDepth = (double)_threadDepth.Value / 1000 };
+                    var values = new HoleDefinition { TerminationType = _hole.TerminationType, MeasuredDepth = _hole.MeasuredDepth, DrillDepth = _hole.DrillDepth, ThroughLength = _hole.ThroughLength, ThreadDepth = (double)_threadDepth.Value / 1000 };
                     selected.ApplyTo(values);
                     LoadFields(values);
                 }
@@ -128,7 +128,7 @@ namespace Blankedge.SWHoleTools.UI
             _hole.Pitch = (double)_pitch.Value / 1000;
             _hole.ThreadDepth = (double)_threadDepth.Value / 1000;
             _hole.Tolerance = _tolerance.Text.Trim();
-            _hole.AnnotationText = _annotation.Text.Trim();
+            _hole.AnnotationText = Blankedge.SWHoleTools.Drawing.HoleAnnotationGenerator.ExplicitThreadText(_hole, _annotation.Text.Trim());
         }
 
         private HoleTagDefinition SelectedTag() =>
@@ -142,7 +142,7 @@ namespace Blankedge.SWHoleTools.UI
             _standard.Text = values.ThreadStandard;
             _size.Text = values.ThreadSize;
             _tolerance.Text = values.Tolerance;
-            _annotation.Text = values.AnnotationText;
+            _annotation.Text = Blankedge.SWHoleTools.Drawing.HoleAnnotationGenerator.ExplicitThreadText(values, values.AnnotationText);
             SetLength(_pitch, values.Pitch * 1000);
             SetLength(_threadDepth, values.ThreadDepth * 1000);
         }

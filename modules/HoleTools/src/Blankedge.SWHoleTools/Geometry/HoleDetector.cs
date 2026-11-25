@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using Blankedge.SWHoleTools.Attributes;
 using Blankedge.SWHoleTools.Model;
@@ -78,6 +78,7 @@ namespace Blankedge.SWHoleTools.Geometry
                     return OperationResult<HoleAnalysis>.Fail(error);
                 }
 
+                if (!face.FaceInSurfaceSense()) return OperationResult<HoleAnalysis>.Fail("所选面是外圆柱面，不是孔内壁。");
                 Logger.Info($"识别圆柱：半径={cylinder.Radius:F9} m，轴线={cylinder.Axis}。" );
                 OperationResult<HoleGroup> groupResult = _groupResolver.Resolve(face, cylinder);
                 if (!groupResult.Success)
@@ -87,12 +88,9 @@ namespace Blankedge.SWHoleTools.Geometry
 
                 HoleGroup group = groupResult.Value;
                 // A concave cylindrical surface may be an open slot, not a closed bore.
-                // Split cylindrical walls without a complete wrap require manual review.
-                bool closedWall = group.Cylinders.Any(item =>
-                {
-                    var uv = item.Face.GetUVBounds() as double[];
-                    return uv != null && uv.Length >= 2 && Math.Abs(uv[1] - uv[0]) >= 2.0 * Math.PI - 1e-6;
-                });
+                // Imported bores often have two or more cylindrical patches.
+                // Validate their shared seams as well as the angular wrap.
+                bool closedWall = HasClosedWall(group);
                 if (!closedWall)
                     return OperationResult<HoleAnalysis>.Fail("圆柱面未形成可确认的完整孔壁，可能为开口槽或分割面，请人工复核。");
                 TerminationAnalysis termination = _terminationAnalyzer.Analyze(model, group);
@@ -119,6 +117,49 @@ namespace Blankedge.SWHoleTools.Geometry
                 Logger.Error("孔识别失败。", ex);
                 return OperationResult<HoleAnalysis>.Fail("孔识别失败：" + ex.Message);
             }
+        }
+
+        private bool HasClosedWall(HoleGroup group)
+        {
+            const double angleTolerance = 1e-6;
+            foreach (var seed in group.Cylinders)
+            {
+                var uv = SwMath.ToDoubleArray(seed.Face.GetUVBounds());
+                if (uv.Length >= 2 && Math.Abs(uv[1] - uv[0]) >= 2 * Math.PI - angleTolerance)
+                    return true;
+
+                double tolerance = Math.Max(1e-7, seed.Geometry.Radius * 1e-4);
+                double station = (seed.MinStation + seed.MaxStation) * 0.5;
+                var patches = group.Cylinders.Where(c =>
+                    Math.Abs(c.Geometry.Radius - seed.Geometry.Radius) <= tolerance &&
+                    c.MinStation < station - tolerance && c.MaxStation > station + tolerance).ToList();
+                if (patches.Count < 2) continue;
+
+                double angle = 0;
+                bool closed = true;
+                foreach (var patch in patches)
+                {
+                    var bounds = SwMath.ToDoubleArray(patch.Face.GetUVBounds());
+                    if (bounds.Length < 2) { closed = false; break; }
+                    angle += Math.Abs(bounds[1] - bounds[0]);
+                    foreach (IEdge edge in SwMath.ToComList<IEdge>(patch.Face.GetEdges()))
+                    {
+                        var curve = edge.GetCurve() as ICurve;
+                        if (curve != null && curve.IsCircle()) continue; // axial end boundary
+                        // Every longitudinal seam must join another patch of this
+                        // same bore. A slot instead borders a plane or an open edge.
+                        long ownId = SwMath.GetComIdentity(patch.Face);
+                        bool joined = SwMath.ToComList<IFace2>(edge.GetTwoAdjacentFaces2()).Any(adjacent =>
+                            adjacent != null && SwMath.GetComIdentity(adjacent) != ownId &&
+                            patches.Any(p => SwMath.GetComIdentity(p.Face) == SwMath.GetComIdentity(adjacent)));
+                        if (!joined) { closed = false; break; }
+                    }
+                    if (!closed) break;
+                }
+                if (closed && Math.Abs(angle - 2 * Math.PI) <= angleTolerance * patches.Count)
+                    return true;
+            }
+            return false;
         }
 
         private string CreateBodyId(IModelDoc2 model, IBody2 body)

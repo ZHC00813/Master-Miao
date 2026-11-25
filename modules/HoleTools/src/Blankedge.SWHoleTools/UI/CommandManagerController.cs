@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Blankedge.SWHoleTools.Utilities;
 using SolidWorks.Interop.sldworks;
@@ -62,7 +62,7 @@ namespace Blankedge.SWHoleTools.UI
                 int commandType = (int)swCommandItemType_e.swMenuItem | (int)swCommandItemType_e.swToolbarItem;
                 int[] indices =
                 {
-                    group.AddCommandItem2("喵师傅孔标注", -1, "读取 SW 当前所选孔面并设置标签与 RGB 颜色", "喵师傅孔标注", 0, "OnRecognizeHole", "CanRunPartCommand", 1001, commandType),
+                    group.AddCommandItem2("喵师傅孔标注", -1, "读取 SW 当前所选孔面并设置标签与 RGB 颜色", "喵师傅孔标注", 0, "OnRecognizeHole", "CanRunHoleCommand", 1001, commandType),
                     group.AddCommandItem2("应用标记", -1, "分析并写入默认孔标记", "应用标记", 1, "OnApplyMark", "CanRunPartCommand", 1002, commandType),
                     group.AddCommandItem2("修改标记", -1, "修改所选孔已有标记", "修改标记", 2, "OnModifyMark", "CanRunPartCommand", 1003, commandType),
                     group.AddCommandItem2("清除标记", -1, "清除所选孔的 Attribute 和颜色", "清除标记", 3, "OnClearMark", "CanRunPartCommand", 1004, commandType),
@@ -85,6 +85,7 @@ namespace Blankedge.SWHoleTools.UI
                 }
 
                 AddTab((int)swDocumentTypes_e.swDocPART, commandIds);
+                AddTab((int)swDocumentTypes_e.swDocASSEMBLY, commandIds);
                 AddTab((int)swDocumentTypes_e.swDocDRAWING, commandIds);
                 AddFaceMenu(icons);
                 Logger.Info("Hole Tools CommandManager 已创建。" );
@@ -142,7 +143,7 @@ namespace Blankedge.SWHoleTools.UI
                 _faceMenu.MainIconList = icons.MainIcons;
                 _faceMenu.IconList = icons.CommandStrips;
                 int index = _faceMenu.AddCommandItem2("喵师傅孔标注", -1, "标注所选孔内壁",
-                    "喵师傅孔标注", 0, "OnRecognizeHole", "CanRunPartCommand", 2001,
+                    "喵师傅孔标注", 0, "OnRecognizeHole", "CanRunHoleCommand", 2001,
                     (int)swCommandItemType_e.swMenuItem);
                 _faceMenu.HasToolbar = false;
                 _faceMenu.HasMenu = true;

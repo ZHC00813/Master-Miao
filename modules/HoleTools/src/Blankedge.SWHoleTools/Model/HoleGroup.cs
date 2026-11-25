@@ -1,4 +1,5 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
+using System.Linq;
 using Blankedge.SWHoleTools.Geometry;
 using Blankedge.SWHoleTools.Utilities;
 using SolidWorks.Interop.sldworks;
@@ -15,6 +16,8 @@ namespace Blankedge.SWHoleTools.Model
         public double MainRadius { get; set; }
         public double MinStation { get; set; }
         public double MaxStation { get; set; }
+        public IList<IFace2> ManualFaces { get; } = new List<IFace2>();
+        public IEnumerable<IFace2> MarkedFaces => ManualFaces.Count > 0 ? ManualFaces : Cylinders.Select(c => c.Face).Concat(Cones.Select(c => c.Face));
         public IList<IFace2> Faces { get; } = new List<IFace2>();
         public IList<CylindricalFaceInfo> Cylinders { get; } = new List<CylindricalFaceInfo>();
         public IList<ConicalFaceInfo> Cones { get; } = new List<ConicalFaceInfo>();

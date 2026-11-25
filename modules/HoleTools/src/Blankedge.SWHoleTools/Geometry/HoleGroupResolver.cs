@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Blankedge.SWHoleTools.Model;
@@ -109,9 +109,10 @@ namespace Blankedge.SWHoleTools.Geometry
             }
         }
 
+        private static bool IsInner(IFace2 face) { return face != null && face.FaceInSurfaceSense(); }
         private bool TryAddCurvedFace(HoleGroup group, IFace2 face, CylinderGeometry reference, double tolerance)
         {
-            if (_faces.TryGetCylinder(face, out CylinderGeometry cylinder, out _) && _faces.AreCoaxial(reference, cylinder, tolerance))
+            if (IsInner(face) && _faces.TryGetCylinder(face, out CylinderGeometry cylinder, out _) && _faces.AreCoaxial(reference, cylinder, tolerance))
             {
                 var info = new CylindricalFaceInfo { Face = face, Geometry = cylinder };
                 foreach (CircularEdgeInfo edge in _faces.GetCircularEdges(face))
@@ -127,7 +128,7 @@ namespace Blankedge.SWHoleTools.Geometry
                 return true;
             }
 
-            if (_faces.TryGetCone(face, out ConeGeometry cone) && _faces.IsCoaxial(reference, cone, tolerance))
+            if (IsInner(face) && _faces.TryGetCone(face, out ConeGeometry cone) && _faces.IsCoaxial(reference, cone, tolerance))
             {
                 var info = new ConicalFaceInfo { Face = face, Geometry = cone };
                 foreach (CircularEdgeInfo edge in _faces.GetCircularEdges(face))
@@ -149,8 +150,8 @@ namespace Blankedge.SWHoleTools.Geometry
 
         private bool IsCoaxialCurvedFace(IFace2 face, CylinderGeometry reference, double tolerance)
         {
-            return (_faces.TryGetCylinder(face, out CylinderGeometry cylinder, out _) && _faces.AreCoaxial(reference, cylinder, tolerance)) ||
-                   (_faces.TryGetCone(face, out ConeGeometry cone) && _faces.IsCoaxial(reference, cone, tolerance));
+            return IsInner(face) && ((_faces.TryGetCylinder(face, out CylinderGeometry cylinder, out _) && _faces.AreCoaxial(reference, cylinder, tolerance)) ||
+                   (_faces.TryGetCone(face, out ConeGeometry cone) && _faces.IsCoaxial(reference, cone, tolerance)));
         }
 
         private void EnqueueCoaxialFacesAcrossBridge(

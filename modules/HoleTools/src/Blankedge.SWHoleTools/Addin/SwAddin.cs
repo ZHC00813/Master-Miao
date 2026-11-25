@@ -143,7 +143,10 @@ namespace Blankedge.SWHoleTools.Addin
                 _pane.ShowView();
                 var model = ActiveModel();
                 if ((model?.SelectionManager as ISelectionMgr)?.GetSelectedObjectCount2(-1) > 0)
-                    _filter.Scan();
+                {
+                    try { _filter.Scan(); }
+                    catch (Exception ex) { Logger.Error("当前选择不能扫描，保留孔助手面板。", ex); Notify(ex.Message); }
+                }
             }
             catch (Exception ex)
             {
@@ -267,6 +270,12 @@ namespace Blankedge.SWHoleTools.Addin
             Notify(created
                 ? "已为第一个匹配孔创建基础 Note 示例；原生 Hole Callout 与 Leader 将在下一阶段实现。"
                 : "创建基础工程图 Note 失败，请查看日志。" );
+        }
+
+        public int CanRunHoleCommand()
+        {
+            try { var model = ActiveModel(); return model is IPartDoc || model is IAssemblyDoc ? 1 : 0; }
+            catch { return 0; }
         }
 
         public int CanRunPartCommand()
