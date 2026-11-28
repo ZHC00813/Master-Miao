@@ -1,0 +1,51 @@
+name: Verified 1.6.3 one-time release
+on: workflow_dispatch
+permissions:
+  contents: write
+concurrency: verified-release-163
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main' && github.repository == 'ZHC00813/Master-Miao'
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            releases/v1.6.2
+            releases/v1.6.3
+      - name: Reproduce verified installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          tzutil /s "China Standard Time"
+          $baseExe=(Resolve-Path 'releases/v1.6.2/MasterMiao-1.6.2-Setup-x64.exe').Path
+          if((Get-FileHash $baseExe).Hash -ne '01E9E6DB96832789E93719765A4AB9B55B0C7A1EEF89A1638B3727494A3F2AA8'){throw 'Unexpected base installer'}
+          $compilerExe="$env:RUNNER_TEMP/inno673.exe"
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $compilerExe
+          if((Get-FileHash $compilerExe).Hash -ne '9C73C3BAE7ED48D44112A0F48E66742C00090BDB5BEF71D9D3C056C66E97B732'){throw 'Unexpected compiler'}
+          function Install($exe,$dir){$x=Start-Process $exe -ArgumentList ('/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CURRENTUSER /DIR="'+$dir+'"') -PassThru -Wait; if($x.ExitCode){throw "Installer exit $($x.ExitCode)"}}
+          Install $baseExe "$env:RUNNER_TEMP/base162"
+          Install $compilerExe "$env:RUNNER_TEMP/inno"
+          & ./releases/v1.6.3/build/build.ps1 -BaseInstall "$env:RUNNER_TEMP/base162" -Compiler "$env:RUNNER_TEMP/inno/ISCC.exe" -WorkingDirectory "$env:RUNNER_TEMP/mm163"
+      - name: Verify remote asset and publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:GH_TOKEN";'User-Agent'='MasterMiao-release'}
+          $url='https://api.github.com/repos/ZHC00813/Master-Miao/releases/461471870'
+          $r=Invoke-RestMethod $url -Headers $h
+          if($r.tag_name -ne 'v1.6.3' -or $r.target_commitish -ne '46e1213403807f5a8208524aae17b12db9b62417'){throw 'Unexpected release'}
+          $f=Get-Item "$env:RUNNER_TEMP/mm163/output/MasterMiao-1.6.3-Setup-x64.exe"
+          $digest='sha256:a7f552eee77b3e33f2da4b0789e0e5f866ce2d2080895b9fd9d8c517e2674978'
+          if($f.Length -ne 97945749 -or ('sha256:'+(Get-FileHash $f).Hash.ToLowerInvariant()) -ne $digest){throw 'Local verification failed'}
+          if(!($r.assets|Where-Object name -eq $f.Name)){
+            Invoke-RestMethod ($r.upload_url.Split('{')[0]+'?name='+$f.Name) -Headers $h -Method Post -InFile $f.FullName -ContentType application/octet-stream | Out-Null
+          }
+          $a=(Invoke-RestMethod $url -Headers $h).assets | Where-Object name -eq $f.Name
+          if($a.state -ne 'uploaded' -or $a.size -ne 97945749 -or $a.digest -ne $digest){throw 'GitHub asset verification failed'}
+          if($r.draft){Invoke-RestMethod $url -Headers $h -Method Patch -ContentType application/json -Body '{"draft":false}' | Out-Null}
+          Write-Output "$($a.name) $($a.size) $($a.digest)"
