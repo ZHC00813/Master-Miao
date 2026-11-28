@@ -68,7 +68,8 @@ namespace Blankedge.SWHoleTools.UI
                     group.AddCommandItem2("清除标记", -1, "清除所选孔的 Attribute 和颜色", "清除标记", 3, "OnClearMark", "CanRunPartCommand", 1004, commandType),
                     group.AddCommandItem2("孔检查", -1, "扫描当前零件中的潜在孔", "孔检查", 4, "OnInspectHoles", "CanRunPartCommand", 1005, commandType),
                     group.AddCommandItem2("自动工程图标注", -1, "创建第一阶段基础孔 Note", "自动工程图标注", 5, "OnAutoAnnotate", "CanRunDrawingCommand", 1006, commandType),
-                    group.AddCommandItem2("标签管理", -1, "新建或编辑颜色与孔语义标签", "标签管理", 6, "OnManageTags", "CanManageTags", 1007, commandType)
+                    group.AddCommandItem2("标签管理", -1, "新建或编辑颜色与孔语义标签", "标签管理", 6, "OnManageTags", "CanManageTags", 1007, commandType),
+                    group.AddCommandItem2("选中面添加为外螺纹", -1, "选择外圆柱面并指定外螺纹标签", "添加外螺纹", 1, "OnAddExternalThread", "CanRunHoleCommand", 1008, commandType)
                 };
 
                 group.HasToolbar = true;
@@ -145,9 +146,10 @@ namespace Blankedge.SWHoleTools.UI
                 int index = _faceMenu.AddCommandItem2("喵师傅孔标注", -1, "标注所选孔内壁",
                     "喵师傅孔标注", 0, "OnRecognizeHole", "CanRunHoleCommand", 2001,
                     (int)swCommandItemType_e.swMenuItem);
+                int external = _faceMenu.AddCommandItem2("选中面添加为外螺纹", -1, "指定外圆柱面的螺纹标签", "添加外螺纹", 1, "OnAddExternalThread", "CanRunHoleCommand", 2002, (int)swCommandItemType_e.swMenuItem);
                 _faceMenu.HasToolbar = false;
                 _faceMenu.HasMenu = true;
-                if (index < 0 || !_faceMenu.Activate())
+                if (index < 0 || external < 0 || !_faceMenu.Activate())
                     Logger.Warn("面的右键孔标注命令未激活。");
                 else
                     Logger.Info("面的右键孔标注命令已激活。");
@@ -183,3 +185,4 @@ namespace Blankedge.SWHoleTools.UI
         }
     }
 }
+

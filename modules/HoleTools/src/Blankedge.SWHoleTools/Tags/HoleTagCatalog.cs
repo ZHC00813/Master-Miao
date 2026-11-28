@@ -38,6 +38,7 @@ namespace Blankedge.SWHoleTools.Tags
         {
             [System.Runtime.Serialization.DataMember] public List<HoleTagDefinition> Tags;
             [System.Runtime.Serialization.DataMember] public string[] Groups;
+            [System.Runtime.Serialization.DataMember] public bool MetricExternalPresetsV1;
         }
 
         public string FilePath { get; }
@@ -48,7 +49,7 @@ namespace Blankedge.SWHoleTools.Tags
             string filePath = ResolveFilePath();
             if (!File.Exists(filePath))
             {
-                return new HoleTagCatalog(CreateDefaults(), filePath);
+                return new HoleTagCatalog(CreateDefaults().Concat(MetricExternalPresets()), filePath);
             }
 
             try
@@ -64,17 +65,20 @@ namespace Blankedge.SWHoleTools.Tags
                         var catalog=new HoleTagCatalog(doc.Tags,filePath);
                         foreach(string group in doc.Groups ?? new string[0])
                             if(!string.IsNullOrWhiteSpace(group)) catalog.customGroups.Add(group.Trim());
+                        if (!doc.MetricExternalPresetsV1) catalog.MergeExternalPresets();
                         return catalog;
                     }
                     var serializer = new DataContractJsonSerializer(typeof(List<HoleTagDefinition>));
                     var tags = serializer.ReadObject(stream) as List<HoleTagDefinition>;
-                    return new HoleTagCatalog(tags ?? CreateDefaults(), filePath);
+                    var legacy = new HoleTagCatalog(tags ?? CreateDefaults(), filePath);
+                    legacy.MergeExternalPresets();
+                    return legacy;
                 }
             }
             catch (Exception ex)
             {
                 Logger.Error("读取孔标签目录失败，改用内置标签。", ex);
-                return new HoleTagCatalog(CreateDefaults(), filePath);
+                return new HoleTagCatalog(CreateDefaults().Concat(MetricExternalPresets()), filePath);
             }
         }
 
@@ -89,6 +93,12 @@ namespace Blankedge.SWHoleTools.Tags
                 throw new InvalidOperationException("RGB 分量必须在 0 到 255 之间。");
             if (_items.GroupBy(item => (item.Red << 16) | (item.Green << 8) | item.Blue).Any(group => group.Count() > 1))
                 throw new InvalidOperationException("不同标签不能使用相同 RGB 编码，请重新分配颜色。");
+            foreach (var external in _items.Where(t => t.HoleType == HoleSemanticType.ExternalThread))
+            {
+                var color = Lab(external.Red, external.Green, external.Blue);
+                if (_items.Any(t => t != external && Distance(color, Lab(t.Red,t.Green,t.Blue)) < 144))
+                    throw new InvalidOperationException("外螺纹标签“" + external.Name + "”的颜色太接近其他标签，请使用自动配色。");
+            }
             string directory = Path.GetDirectoryName(FilePath);
             if (string.IsNullOrWhiteSpace(directory))
             {
@@ -99,7 +109,7 @@ namespace Blankedge.SWHoleTools.Tags
             string temporary = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
             using (var stream = File.Create(temporary))
             {
-                new DataContractJsonSerializer(typeof(Document)).WriteObject(stream, new Document { Tags=_items, Groups=GroupNames });
+                new DataContractJsonSerializer(typeof(Document)).WriteObject(stream, new Document { Tags=_items, Groups=GroupNames, MetricExternalPresetsV1=true });
             }
 
             if (File.Exists(FilePath))
@@ -113,26 +123,45 @@ namespace Blankedge.SWHoleTools.Tags
             }
         }
 
+        // The assistant expands missing nominal sizes only for internal thread requests.
+        public static bool ExpandHoleRange(string question, string keyword) =>
+            question.Contains(keyword) && !question.Contains("外螺纹");
+
         public void AssignAvailableColor(HoleTagDefinition tag)
         {
             if (tag == null) throw new ArgumentNullException(nameof(tag));
-            var used = new HashSet<int>(_items.Select(item => (item.Red << 16) | (item.Green << 8) | item.Blue));
-            // Odd-step permutation visits every 24-bit code without repetition.
-            for (int i = 0; i < 0x1000000; i++)
+            var used = _items.Where(t => t.Id != tag.Id).Select(t => Lab(t.Red,t.Green,t.Blue)).ToArray();
+            double best = -1;
+            for (int r = 16; r <= 240; r += 16)
+            for (int g = 16; g <= 240; g += 16)
+            for (int b = 16; b <= 240; b += 16)
             {
-                int rgb = (int)((0x397BC1L + i * 0x9E3779L) & 0xFFFFFF);
-                int red = rgb >> 16;
-                int green = (rgb >> 8) & 255;
-                int blue = rgb & 255;
-                if (Math.Max(red, Math.Max(green, blue)) < 100 || Math.Min(red, Math.Min(green, blue)) > 225 || used.Contains(rgb)) continue;
-                tag.Red = red;
-                tag.Green = green;
-                tag.Blue = blue;
-                return;
+                var candidate = Lab(r,g,b);
+                if (candidate[0] < 30 || candidate[0] > 88) continue;
+                double distance = used.Select(c => Distance(c,candidate)).DefaultIfEmpty(10000).Min();
+                if (distance <= best) continue;
+                best = distance;
+                tag.Red = r; tag.Green = g; tag.Blue = b;
             }
-            throw new InvalidOperationException("可用 RGB 编码已耗尽。");
+            if (best < 144) throw new InvalidOperationException("当前标签库缺少足够易区分的颜色，请整理标签后重试。");
         }
 
+        private static double Distance(double[] a, double[] b) =>
+            Math.Pow(a[0]-b[0],2) + Math.Pow(a[1]-b[1],2) + Math.Pow(a[2]-b[2],2);
+
+        private static double[] Lab(int red, int green, int blue)
+        {
+            double Linear(int channel) {
+                double s = channel / 255.0;
+                return s <= 0.04045 ? s/12.92 : Math.Pow((s+0.055)/1.055,2.4);
+            }
+            double F(double t) => t > 0.008856 ? Math.Pow(t,1.0/3) : 7.787*t+16.0/116;
+            double r=Linear(red), g=Linear(green), b=Linear(blue);
+            double x=F((0.4124564*r+0.3575761*g+0.1804375*b)/0.95047);
+            double y=F(0.2126729*r+0.7151522*g+0.072175*b);
+            double z=F((0.0193339*r+0.119192*g+0.9503041*b)/1.08883);
+            return new[] {116*y-16,500*(x-y),200*(y-z)};
+        }
         public HoleTagDefinition FindByRgb(int red, int green, int blue)
         {
             var matches = _items.Where(item => item.Red == red && item.Green == green && item.Blue == blue).Take(2).ToArray();
@@ -146,6 +175,40 @@ namespace Blankedge.SWHoleTools.Tags
                 ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Blankedge", "SWHoleTools")
                 : Path.GetFullPath(overrideDirectory);
             return Path.Combine(directory, "hole-tags.json");
+        }
+
+        private static IEnumerable<HoleTagDefinition> MetricExternalPresets()
+        {
+            yield return new HoleTagDefinition { Id="23cac3cd960847c2a52c23f4ae934c64", Name="M1×0.25 外螺纹", ThreadSize="M1", PitchMillimeters=0.25, Red=96, Green=64, Blue=64, GroupName="公制外螺纹", HoleType=HoleSemanticType.ExternalThread, Tolerance="", AnnotationTemplate="{Tag}" };
+            yield return new HoleTagDefinition { Id="4d9fd60ee53a4e1e92cf18fdfbb7184f", Name="M2×0.4 外螺纹", ThreadSize="M2", PitchMillimeters=0.4, Red=240, Green=16, Blue=16, GroupName="公制外螺纹", HoleType=HoleSemanticType.ExternalThread, Tolerance="", AnnotationTemplate="{Tag}" };
+            yield return new HoleTagDefinition { Id="e72fc711a3274c90a3506fc59c2c86bc", Name="M3×0.5 外螺纹", ThreadSize="M3", PitchMillimeters=0.5, Red=112, Green=96, Blue=16, GroupName="公制外螺纹", HoleType=HoleSemanticType.ExternalThread, Tolerance="", AnnotationTemplate="{Tag}" };
+            yield return new HoleTagDefinition { Id="8ff37fefad4f4034927548017d877e47", Name="M4×0.7 外螺纹", ThreadSize="M4", PitchMillimeters=0.7, Red=240, Green=16, Blue=96, GroupName="公制外螺纹", HoleType=HoleSemanticType.ExternalThread, Tolerance="", AnnotationTemplate="{Tag}" };
+            yield return new HoleTagDefinition { Id="3cdc66e39c434062b8b821b3a432f6d1", Name="M5×0.8 外螺纹", ThreadSize="M5", PitchMillimeters=0.8, Red=16, Green=96, Blue=112, GroupName="公制外螺纹", HoleType=HoleSemanticType.ExternalThread, Tolerance="", AnnotationTemplate="{Tag}" };
+            yield return new HoleTagDefinition { Id="13fc0e63d09d42abae099e8e1716a996", Name="M6×1 外螺纹", ThreadSize="M6", PitchMillimeters=1, Red=144, Green=128, Blue=240, GroupName="公制外螺纹", HoleType=HoleSemanticType.ExternalThread, Tolerance="", AnnotationTemplate="{Tag}" };
+            yield return new HoleTagDefinition { Id="9005fc87f4ee44e7b10932e2bb2f8257", Name="M7×1 外螺纹", ThreadSize="M7", PitchMillimeters=1, Red=192, Green=176, Blue=240, GroupName="公制外螺纹", HoleType=HoleSemanticType.ExternalThread, Tolerance="", AnnotationTemplate="{Tag}" };
+            yield return new HoleTagDefinition { Id="016139fb43864efeb3bf349621ede2e1", Name="M8×1.25 外螺纹", ThreadSize="M8", PitchMillimeters=1.25, Red=48, Green=80, Blue=48, GroupName="公制外螺纹", HoleType=HoleSemanticType.ExternalThread, Tolerance="", AnnotationTemplate="{Tag}" };
+            yield return new HoleTagDefinition { Id="5651d22e611f49aebfa83c00cca876d5", Name="M9×1.25 外螺纹", ThreadSize="M9", PitchMillimeters=1.25, Red=160, Green=144, Blue=144, GroupName="公制外螺纹", HoleType=HoleSemanticType.ExternalThread, Tolerance="", AnnotationTemplate="{Tag}" };
+            yield return new HoleTagDefinition { Id="30f5d80152f648f69309dfe467ad5072", Name="M10×1.5 外螺纹", ThreadSize="M10", PitchMillimeters=1.5, Red=16, Green=16, Blue=240, GroupName="公制外螺纹", HoleType=HoleSemanticType.ExternalThread, Tolerance="", AnnotationTemplate="{Tag}" };
+        }
+
+        private void MergeExternalPresets()
+        {
+            foreach (var preset in MetricExternalPresets())
+            {
+                var existing = _items.FirstOrDefault(t => t.Id == preset.Id || (t.HoleType == preset.HoleType && t.InGroup(preset.Group) && t.ThreadSize == preset.ThreadSize));
+                if (existing != null)
+                {
+                    if (existing.PitchMillimeters == 0 && existing.Name == preset.ThreadSize + " 外螺纹")
+                    {
+                        existing.PitchMillimeters = preset.PitchMillimeters;
+                        existing.Name = preset.Name;
+                    }
+                    continue;
+                }
+                var color = Lab(preset.Red, preset.Green, preset.Blue);
+                if (_items.Any(t => Distance(color, Lab(t.Red,t.Green,t.Blue)) < 144)) AssignAvailableColor(preset);
+                _items.Add(preset);
+            }
         }
 
         private static IEnumerable<HoleTagDefinition> CreateDefaults()
@@ -188,3 +251,6 @@ namespace Blankedge.SWHoleTools.Tags
         }
     }
 }
+
+
+

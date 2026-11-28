@@ -46,7 +46,7 @@ namespace Blankedge.SWHoleTools.UI
             group.Items.AddRange(catalog.GroupNames);
             group.SelectedItem=catalog.Find(hole.TagId)?.Group ?? catalog.Items.FirstOrDefault()?.Group ?? "公制";
             AddRow(grid,"标签分组",group);
-            _tags = catalog.Items.Where(t=>t.InGroup(group.Text)).OrderBy(t => t.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+            _tags = catalog.Items.Where(t=>t.InGroup(group.Text) && t.HoleType != HoleSemanticType.ExternalThread).OrderBy(t => t.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
             _tag.Items.Add("不使用标签");
             _tag.Items.AddRange(_tags.Select(t => t.DisplayName).ToArray());
             int index = Array.FindIndex(_tags, t => string.Equals(t.Id, hole.TagId, StringComparison.OrdinalIgnoreCase));
@@ -59,7 +59,7 @@ namespace Blankedge.SWHoleTools.UI
             else _tag.SelectedIndex = index + 1;
             group.SelectionChangeCommitted+=(s,e)=>
             {
-                _tags=catalog.Items.Where(t=>t.InGroup(group.Text)).OrderBy(t=>t.Name).ToArray();
+                _tags=catalog.Items.Where(t=>t.InGroup(group.Text) && t.HoleType != HoleSemanticType.ExternalThread).OrderBy(t=>t.Name).ToArray();
                 _tag.Items.Clear();_tag.Items.Add("不使用标签");_tag.Items.AddRange(_tags.Select(t=>t.DisplayName).ToArray());
                 int current=Array.FindIndex(_tags,t=>t.Id==hole.TagId);
                 _keepExistingTag=current<0 && !string.IsNullOrEmpty(hole.TagId);
@@ -67,7 +67,7 @@ namespace Blankedge.SWHoleTools.UI
                 _tag.SelectedIndex=_keepExistingTag?_tag.Items.Count-1:current+1;
                 LoadFields(hole);
             };
-            _type.DataSource = Enum.GetValues(typeof(HoleSemanticType));
+            _type.DataSource = Enum.GetValues(typeof(HoleSemanticType)).Cast<HoleSemanticType>().Where(t => t != HoleSemanticType.ExternalThread).ToArray();
             _color.DataSource = Enum.GetValues(typeof(HoleColorCode));
             _standard.Items.Add("ISO Metric");
             _size.Items.AddRange(standards.Metric.Select(t => t.Size).ToArray());

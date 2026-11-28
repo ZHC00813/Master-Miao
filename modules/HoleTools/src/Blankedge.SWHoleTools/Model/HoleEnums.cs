@@ -8,7 +8,7 @@ namespace Blankedge.SWHoleTools.Model
         Dowel,
         Counterbore,
         Countersink,
-        Custom
+        Custom, ExternalThread
     }
 
     public enum TerminationType
@@ -42,3 +42,4 @@ namespace Blankedge.SWHoleTools.Model
         Custom
     }
 }
+

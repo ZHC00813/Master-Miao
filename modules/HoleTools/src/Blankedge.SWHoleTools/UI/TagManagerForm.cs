@@ -25,7 +25,9 @@ namespace Blankedge.SWHoleTools.UI
         private readonly ToolTip _colorTip = new ToolTip();
         private bool _loading;
 
-        public TagManagerForm(HoleTagCatalog catalog)
+        public TagManagerForm(HoleTagCatalog catalog) : this(catalog, null) { }
+
+        internal TagManagerForm(HoleTagCatalog catalog, string initialGroup)
         {
             _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
             Text = "Blankedge 孔标签管理";
@@ -34,7 +36,7 @@ namespace Blankedge.SWHoleTools.UI
             Size = new Size(820, 520);
             Font = new Font("Microsoft YaHei UI", 9F);
             BuildUi();
-            RefreshList();
+            RefreshList(null, initialGroup);
         }
 
         private void BuildUi()
@@ -55,7 +57,7 @@ namespace Blankedge.SWHoleTools.UI
             _list.SelectedIndexChanged += (sender, args) => LoadSelection();
             var listPanel=new Panel { Dock=DockStyle.Fill };
             var newGroup = new Button {Text="＋ 新建分组",Dock=DockStyle.Top};
-            newGroup.Click+=(s,e)=>CreateGroup();
+            newGroup.Click+=(s,e)=> { var name = PromptGroupName(this); if (name != null) RefreshList(null, _catalog.AddGroup(name)); };
             listPanel.Controls.Add(_list); listPanel.Controls.Add(newGroup); listPanel.Controls.Add(_filter);
             left.Controls.Add(listPanel,0,0);
             _filter.SelectionChangeCommitted+=(s,e)=>RefreshList();
@@ -135,10 +137,10 @@ namespace Blankedge.SWHoleTools.UI
             panel.Controls.Add(control, 1, row);
         }
 
-        private void CreateGroup()
+        internal static string PromptGroupName(Control owner)
         {
             using(var dialog=new Form { Text="新建分组",StartPosition=FormStartPosition.CenterParent,FormBorderStyle=FormBorderStyle.FixedDialog,
-                ClientSize=new Size(340,100),Font=Font,MinimizeBox=false,MaximizeBox=false })
+                ClientSize=new Size(340,100),Font=owner.Font,MinimizeBox=false,MaximizeBox=false })
             {
                 var name=new TextBox {Left=15,Top=15,Width=310,AccessibleName="组名"};
                 var create=new Button {Text="创建",Left=155,Top=58,DialogResult=DialogResult.OK,Enabled=false};
@@ -146,7 +148,7 @@ namespace Blankedge.SWHoleTools.UI
                 name.TextChanged+=(s,e)=>create.Enabled=!string.IsNullOrWhiteSpace(name.Text);
                 dialog.Controls.AddRange(new Control[]{name,create,cancel});
                 dialog.AcceptButton=create;dialog.CancelButton=cancel;
-                if(dialog.ShowDialog(this)==DialogResult.OK) RefreshList(null,_catalog.AddGroup(name.Text));
+                return dialog.ShowDialog(owner)==DialogResult.OK ? name.Text.Trim() : null;
             }
         }
 
@@ -262,3 +264,4 @@ namespace Blankedge.SWHoleTools.UI
         private static int Clamp(int value) => Math.Max(0, Math.Min(255, value));
     }
 }
+

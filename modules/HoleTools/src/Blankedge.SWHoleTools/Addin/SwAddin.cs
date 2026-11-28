@@ -127,7 +127,11 @@ namespace Blankedge.SWHoleTools.Addin
             return true;
         }
 
-        public void OnRecognizeHole()
+        public void OnRecognizeHole() => ShowHolePanel(false);
+
+        public void OnAddExternalThread() => ShowHolePanel(true);
+
+        private void ShowHolePanel(bool external)
         {
             try
             {
@@ -141,6 +145,7 @@ namespace Blankedge.SWHoleTools.Addin
                 }
                 _filter.ReloadTags();
                 _pane.ShowView();
+                if (external) { _filter.BeginExternalThread(); return; }
                 var model = ActiveModel();
                 if ((model?.SelectionManager as ISelectionMgr)?.GetSelectedObjectCount2(-1) > 0)
                 {
@@ -376,3 +381,4 @@ namespace Blankedge.SWHoleTools.Addin
         }
     }
 }
+

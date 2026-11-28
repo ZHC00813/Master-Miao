@@ -50,11 +50,29 @@ namespace Blankedge.SWHoleTools.UI
             root.Controls.Add(new Label { Text = "孔标注助手", Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 15F, FontStyle.Bold), Dock = DockStyle.Fill }, 0, 0);
             var selection = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1 };
             selection.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            selection.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104));
+            selection.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 196));
             selection.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             selection.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 60));
             selection.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
-            selection.Controls.Add(groups,0,0);
+            var groupPanel = new TableLayoutPanel { Dock=DockStyle.Fill, ColumnCount=2, RowCount=1, Margin=Padding.Empty };
+            groupPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+            groupPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            var createGroup = new Button { Text="新建组", AutoSize=true, Anchor=AnchorStyles.Top, AccessibleName="新建标签分组" };
+            createGroup.Click += (sender,args) => {
+                var name = TagManagerForm.PromptGroupName(this);
+                if (name == null) return;
+                try {
+                    var library = HoleTagCatalog.Load();
+                    var group = library.AddGroup(name);
+                    library.Save();
+                    ReloadTags();
+                    groups.SelectedItem = group;
+                    status.Text = "当前分组：" + group + "。可在标签管理中新建或移入标签。";
+                } catch (Exception ex) { status.Text = "保存分组失败：" + ex.Message; }
+            };
+            groupPanel.Controls.Add(groups,0,0);
+            groupPanel.Controls.Add(createGroup,1,0);
+            selection.Controls.Add(groupPanel,0,0);
             groups.SelectedIndexChanged+=(s,e)=>FilterTags();
             selection.Controls.Add(tags, 1, 0);
             selection.Controls.Add(swatch, 2, 0);
@@ -63,7 +81,8 @@ namespace Blankedge.SWHoleTools.UI
             var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, AutoScroll = true };
             if (installButton != null) actions.Controls.Add(installButton);
             AddButton(actions, "扫描所选实体 / 面 / 孔", Scan);
-            AddButton(actions, "选中面添加为一个孔", AddManual);
+            AddButton(actions, "选中面添加为外螺纹", BeginExternalThread);
+            AddButton(actions, "选中面添加为一个孔", () => AddManual(false));
             AddButton(actions, "应用标签并上色", Apply);
             AddButton(actions, "读取已标注孔", LoadMarked);
             AddButton(actions, "清除勾选标注", ClearMarked);
@@ -114,7 +133,7 @@ namespace Blankedge.SWHoleTools.UI
             if (installButton == null)
             {
                 root.Padding = new Padding(4);
-                selection.ColumnStyles[0].Width = 50;
+                selection.ColumnStyles[0].Width = 140;
                 selection.ColumnStyles[2].Width = 32;
                 selection.ColumnStyles[3].Width = 0;
                 actions.WrapContents = true;
@@ -157,13 +176,13 @@ namespace Blankedge.SWHoleTools.UI
         private void UpdateColor()
         {
             var tag = tags.SelectedItem as HoleTagDefinition;
-            if (tag == null) return;
+            if (tag == null) { swatch.BackColor = Color.Transparent; rgb.Text = ""; return; }
             swatch.BackColor = Color.FromArgb(Math.Max(0, Math.Min(255, tag.Red)), Math.Max(0, Math.Min(255, tag.Green)), Math.Max(0, Math.Min(255, tag.Blue)));
             rgb.Text = string.Format("RGB {0}, {1}, {2}", tag.Red, tag.Green, tag.Blue);
         }
         private void ManageTags()
         {
-            using (var form = new TagManagerForm(HoleTagCatalog.Load())) form.ShowDialog(this);
+            using (var form = new TagManagerForm(HoleTagCatalog.Load(), groups.SelectedItem as string)) form.ShowDialog(this);
             ReloadTags();
         }
         private sealed class Entry
@@ -212,7 +231,7 @@ namespace Blankedge.SWHoleTools.UI
             holes.Nodes.Clear();
             entries.Clear();
             scanned = null;
-
+            
             {
                 var app = application();
                 var doc = app.IActiveDoc2;
@@ -314,7 +333,7 @@ namespace Blankedge.SWHoleTools.UI
             }
         }
 
-
+        
         private List<HoleSelectionContext> MarkContexts(IModelDoc2 doc)
         {
             if (doc is IPartDoc) return new List<HoleSelectionContext> { new HoleSelectionContext { Owner = doc, Configuration = doc.ConfigurationManager.ActiveConfiguration.Name } };
@@ -395,7 +414,7 @@ namespace Blankedge.SWHoleTools.UI
 
         private void Locate(TreeNode node)
         {
-
+            
             {
                 var app = application();
                 var doc = app.IActiveDoc2;
@@ -427,10 +446,33 @@ namespace Blankedge.SWHoleTools.UI
         {
             return new Entry { Reference = references.Create(doc, faces[0]),
                 WallReferences = faces.Select(f => references.Create(doc, f)).ToArray(),
-                Group = "手动孔 · " + hole.TagName, Manual = true, Number = number };
+                Group = (hole.HoleType == HoleSemanticType.ExternalThread ? "外螺纹 · " : "手动孔 · ") + hole.TagName, Manual = true, Number = number };
         }
 
-        private void AddManual()
+        private Timer externalSelection;
+        internal void BeginExternalThread()
+        {
+            if (externalSelection != null) { StopExternalSelection(); status.Text = "已取消选择外螺纹面。"; return; }
+            var doc = application().IActiveDoc2;
+            if (!(doc is IPartDoc) && !(doc is IAssemblyDoc)) throw new InvalidOperationException("请先打开零件或装配体。");
+            if (((ISelectionMgr)doc.SelectionManager).GetSelectedObjectCount2(-1) > 0) { AddManual(true); return; }
+            status.Text = "请在 SOLIDWORKS 图形区点选一个外圆柱面，再次点击外螺纹按钮可取消。";
+            externalSelection = new Timer { Interval = 250 };
+            externalSelection.Tick += (sender,args) => {
+                try {
+                    if (!Visible || SwMath.GetComIdentity(application().IActiveDoc2) != SwMath.GetComIdentity(doc)) { StopExternalSelection(); return; }
+                    if (((ISelectionMgr)doc.SelectionManager).GetSelectedObjectCount2(-1) == 0) return;
+                    StopExternalSelection();
+                    AddManual(true);
+                } catch (Exception ex) { StopExternalSelection(); status.Text = ex.Message; }
+            };
+            externalSelection.Start();
+        }
+
+        private void StopExternalSelection() { externalSelection?.Dispose(); externalSelection = null; }
+        protected override void Dispose(bool disposing) { if (disposing) StopExternalSelection(); base.Dispose(disposing); }
+
+        private void AddManual(bool external)
         {
             var app = application();
             var doc = app.IActiveDoc2;
@@ -442,8 +484,15 @@ namespace Blankedge.SWHoleTools.UI
             var faces = context.Items.Cast<IFace2>().ToList();
             var group = ManualHoleService.Group(faces);
             var tag = tags.SelectedItem as HoleTagDefinition;
-            if (tag == null) throw new InvalidOperationException("请先选择标签。");
-            if (MessageBox.Show(this, "将选中的 " + group.ManualFaces.Count + " 个面合为一个手动孔，并应用标签“" + tag.Name + "”？", "手动添加孔", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
+            if (!external && tag == null) throw new InvalidOperationException("请先选择标签。");
+            if (external) {
+                if (faces.Count != 1 || !ManualHoleService.IsExternalCylinder(faces[0])) throw new InvalidOperationException("请选择一个外圆柱面。");
+                tag = ExternalThreadPicker.Choose(this, tag);
+                if (tag == null) return;
+                ReloadTags();
+            }
+            else if (tag.HoleType == HoleSemanticType.ExternalThread) throw new InvalidOperationException("请使用“选中面标为外螺纹”。");
+            else if (MessageBox.Show(this, "将选中的 " + group.ManualFaces.Count + " 个面合为一个手动孔，并应用标签“" + tag.Name + "”？", "手动添加孔", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
             var hole = ManualHoleService.Create(app, owner, group.ManualFaces, tag);
             if (scanned == null || SwMath.GetComIdentity(scanned) != SwMath.GetComIdentity(doc)) entries.Clear();
             scanned = doc;
@@ -456,7 +505,7 @@ namespace Blankedge.SWHoleTools.UI
             doc.ClearSelection2(true);
             doc.GraphicsRedraw2();
             UpdateMarkedCount();
-            status.Text = "已将 " + group.ManualFaces.Count + " 个面记为一个手动孔并上色；请保存零件。";
+            status.Text = external ? "已标记外螺纹：" + tag.Name + "。请保存零件。" : "已将 " + group.ManualFaces.Count + " 个面记为一个手动孔并上色；请保存零件。";
         }
 
         private void SaveMarkedParts()
@@ -484,7 +533,7 @@ namespace Blankedge.SWHoleTools.UI
             if (selected.Count == 0) throw new InvalidOperationException("请先勾选孔或组。");
             var tag = tags.SelectedItem as HoleTagDefinition;
             if (tag == null) throw new InvalidOperationException("请先选择标签。");
-
+            
             {
                 var app = application();
                 var doc = app.IActiveDoc2;
@@ -506,15 +555,17 @@ namespace Blankedge.SWHoleTools.UI
                             var manualGroup = ManualHoleService.Group(members);
                             var manualHole = attributes.Read(face);
                             if (!ManualHoleService.IsManual(manualHole)) throw new InvalidOperationException("手动孔标注已失效，请重新扫描。");
+                            if ((manualHole.HoleType == HoleSemanticType.ExternalThread) != (tag.HoleType == HoleSemanticType.ExternalThread)) throw new InvalidOperationException("请选择与标注类型一致的标签。");
                             tag.ApplyTo(manualHole);
                             var manualSaved = attributes.Save(owner, manualGroup, manualHole);
                             if (!manualSaved.Success) throw new InvalidOperationException(manualSaved.Error);
                             if (!new HoleColorManager().ApplyRgb(manualGroup, tag.Red, tag.Green, tag.Blue, owner)) throw new InvalidOperationException("上色失败。");
-                            entry.Group = "手动孔 · " + tag.Name;
+                            entry.Group = (tag.HoleType == HoleSemanticType.ExternalThread ? "外螺纹 · " : "手动孔 · ") + tag.Name;
                             node.Checked = false;
                             done++;
                             continue;
                         }
+                        if (tag.HoleType == HoleSemanticType.ExternalThread) throw new InvalidOperationException("外螺纹标签仅适用于外圆柱面。");
                         var result = detector.AnalyzeFace(owner, face);
                         if (!result.Success) throw new InvalidOperationException(result.Error);
                         var analysis = result.Value;
@@ -539,3 +590,8 @@ namespace Blankedge.SWHoleTools.UI
         }
     }
 }
+
+
+
+
+

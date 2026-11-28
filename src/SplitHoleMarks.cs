@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.IO;
@@ -76,9 +76,10 @@ namespace SWBodyOrganizer
                    actual.ColorRed!=mark.Hole.ColorRed || actual.ColorGreen!=mark.Hole.ColorGreen || actual.ColorBlue!=mark.Hole.ColorBlue)
                     throw new InvalidDataException("重新打开子零件后，孔标注校验失败："+mark.Hole.HoleID);
                 var material=face.GetMaterialPropertyValues2(Config,null) as double[];
-                if(mark.Material!=null && (material==null || !material.Take(3).SequenceEqual(mark.Material.Take(3))))
+                if(mark.Material!=null && (material==null || !SplitFaceColor.Matches(material.Take(3), mark.Material.Take(3))))
                     throw new InvalidDataException("重新打开子零件后，孔颜色校验失败："+mark.Hole.HoleID);
             }
         }
     }
 }
+

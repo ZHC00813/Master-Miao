@@ -62,6 +62,7 @@ namespace Blankedge.SWHoleTools.Tags
             hole.ColorGreen = Clamp(Green);
             hole.ColorBlue = Clamp(Blue);
             hole.AnnotationText = Blankedge.SWHoleTools.Drawing.HoleAnnotationGenerator.ExplicitThreadText(hole, ExpandTemplate(AnnotationTemplate, hole));
+            if (HoleType == HoleSemanticType.ExternalThread && string.IsNullOrWhiteSpace(hole.AnnotationText)) hole.AnnotationText = Name;
             hole.Version = HoleDefinition.CurrentVersion;
         }
 
@@ -82,3 +83,4 @@ namespace Blankedge.SWHoleTools.Tags
         private static int Clamp(int value) => Math.Max(0, Math.Min(255, value));
     }
 }
+

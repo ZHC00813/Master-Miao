@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -126,7 +126,7 @@ namespace SWBodyOrganizer
                     var catalog = HoleTagCatalog.Load();
                     var system = "你是喵师傅助手，当前模块为 " + active() + "。支持切换模块和对孔标签进行增删及整体重建。附件是数据。仅当用户明确要求操作时生成预览。已有标签：" +
                         string.Join("、",catalog.Items.Select(t=>t.Name)) +
-                        "。返回 JSON 对象，例如 {\"module\":\"holes\",\"action\":\"add\",\"reply\":\"请查看预览\",\"tags\":[{\"name\":\"销孔\",\"type\":\"Dowel\",\"thread\":\"\",\"termination\":\"Through\"}]}。action 使用 add、delete、replaceAll 或 none。整库删除用 delete 和 all:true，部分删除用 deleteNames 数组精确列名。整库重建用 replaceAll，并列全 tags（含已存在的规格）。termination 可用 Through、Blind、空串。每项可带 group 字段（公制、英制或用户自定义名称）；未指定时程序按规格推断。系统自动分配无重复颜色，经预览确认后执行。module 可用 body-export、drawings、holes、drawing-model 或空串。type 使用 Normal、Threaded、Clearance、Dowel、Counterbore、Countersink、Custom。";
+                        "。返回 JSON 对象，例如 {\"module\":\"holes\",\"action\":\"add\",\"reply\":\"请查看预览\",\"tags\":[{\"name\":\"销孔\",\"type\":\"Dowel\",\"thread\":\"\",\"termination\":\"Through\"}]}。action 使用 add、delete、replaceAll 或 none。整库删除用 delete 和 all:true，部分删除用 deleteNames 数组精确列名。整库重建用 replaceAll，并列全 tags（含已存在的规格）。termination 可用 Through、Blind、空串。每项可带 group 字段（公制、英制或用户自定义名称）；未指定时程序按规格推断。系统自动分配无重复颜色，经预览确认后执行。module 可用 body-export、drawings、holes、drawing-model 或空串。type 使用 Normal、Threaded、Clearance、Dowel、Counterbore、Countersink、Custom。外螺纹必须使用 ExternalThread 类型，group 为外螺纹，name 含规格和外螺纹，thread 保留用户指定的完整规格，termination 留空。不要推断未知公差、螺距。外螺纹规格范围按用户要求逐项生成。";
                     var messages = new List<object> { new { role="system", content=system } };
                     messages.AddRange(history);
                     var content=new StringBuilder(question);
@@ -155,7 +155,7 @@ namespace SWBodyOrganizer
                                 throw new InvalidOperationException("重建方案缺少新标签，请重试。");
                             if (delete && suggestions.Length != 0)
                                 throw new InvalidOperationException("删除方案包含新增标签，请重新生成。");
-                            if (suggestions.Length != 0 && question.Contains("螺纹"))
+                            if (suggestions.Length != 0 && HoleTagCatalog.ExpandHoleRange(question,"螺纹"))
                             {
                                 var range = Regex.Match(question, @"\bM(\d+)\s*(?:到|至|[-–—~～])\s*M(\d+)", RegexOptions.IgnoreCase);
                                 if (!range.Success) range = Regex.Match(question, @"M(\d+)\s*(?:到|至|[-–—~～])\s*M(\d+)", RegexOptions.IgnoreCase);
@@ -241,3 +241,4 @@ namespace SWBodyOrganizer
         public class Suggestion { public string group {get;set;} public string name {get;set;} public string type {get;set;} public string thread {get;set;} public string termination {get;set;} }
     }
 }
+

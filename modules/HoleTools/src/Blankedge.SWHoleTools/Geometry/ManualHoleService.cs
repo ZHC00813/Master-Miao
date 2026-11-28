@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Collections.Generic;
 using Blankedge.SWHoleTools.Attributes;
@@ -11,6 +11,7 @@ namespace Blankedge.SWHoleTools.Geometry
 {
     public sealed class ManualHoleService
     {
+        public static bool IsExternalCylinder(IFace2 face) => face != null && face.GetSurface() is ISurface surface && surface.IsCylinder() && !face.FaceInSurfaceSense();
         public static bool IsManual(HoleDefinition hole) => hole != null && (hole.HoleID ?? "").StartsWith("MH-", StringComparison.Ordinal);
         public static HoleGroup Group(IEnumerable<IFace2> faces)
         {
@@ -28,6 +29,7 @@ namespace Blankedge.SWHoleTools.Geometry
             if (!(doc is IPartDoc)) throw new InvalidOperationException("请在目标零件文档中添加手动孔。");
             if (tag == null) throw new InvalidOperationException("请先选择标签。");
             var group = Group(faces);
+            if (tag.HoleType == HoleSemanticType.ExternalThread && (group.ManualFaces.Count != 1 || !IsExternalCylinder(group.SelectedFace))) throw new InvalidOperationException("请选择一个外圆柱面。");
             var attributes = new HoleAttributeManager(app);
             if (group.ManualFaces.Any(f => attributes.Read(f) != null))
                 throw new InvalidOperationException("所选面已有孔标注。为保留原标注，请从孔列表修改标签，或选择未标注的面。");
